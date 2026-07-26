@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import db_dependency
 from app.models import LocationPoint, TripSegment, Visit
+from app.processing import VISIT_MERGE_MAX_GAP_S
 
 router = APIRouter()
 
@@ -45,21 +46,42 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
         .all()
     )
 
+    # Coalesce consecutive visits to the same resolved place with only a
+    # short gap between them into one displayed entry. Each pipeline's own
+    # merge logic only ever considers rows of its own source (Visit.source -
+    # see processing.py), so a continuous stay that happens to straddle the
+    # boundary between imported history and live OwnTracks tracking (or any
+    # other same-source micro-gap that survived clustering) still showed up
+    # as separate cards even though they resolved to the identical place.
+    # Display-only: builds fresh dicts rather than mutating the ORM objects,
+    # so nothing here is ever written back to the database.
     timeline = []
+    coalesced_visits: list[dict] = []
     for v in visits:
-        timeline.append(
-            {
-                "type": "visit",
-                "start_ts": v.start_ts,
-                "end_ts": v.end_ts,
-                "lat": v.lat,
-                "lon": v.lon,
-                "place_id": v.place_id,
-                "place_name": v.place.name if v.place else None,
-                "category": v.place.category if v.place else None,
-                "city": v.place.city if v.place else None,
-            }
-        )
+        prev = coalesced_visits[-1] if coalesced_visits else None
+        if (
+            prev is not None
+            and v.place_id is not None
+            and v.place_id == prev["place_id"]
+            and v.start_ts - prev["end_ts"] <= VISIT_MERGE_MAX_GAP_S
+        ):
+            prev["end_ts"] = max(prev["end_ts"], v.end_ts)
+        else:
+            coalesced_visits.append(
+                {
+                    "start_ts": v.start_ts,
+                    "end_ts": v.end_ts,
+                    "lat": v.lat,
+                    "lon": v.lon,
+                    "place_id": v.place_id,
+                    "place_name": v.place.name if v.place else None,
+                    "category": v.place.category if v.place else None,
+                    "city": v.place.city if v.place else None,
+                }
+            )
+
+    for entry in coalesced_visits:
+        timeline.append({"type": "visit", **entry})
     for s in segments:
         timeline.append(
             {
@@ -83,7 +105,7 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
 
     return {
         "date": day_str,
-        "stats": {**stats, "visits": len(visits)},
+        "stats": {**stats, "visits": len(coalesced_visits)},
         "points": [{"lat": p.lat, "lon": p.lon, "tst": p.tst} for p in points],
         "timeline": timeline,
     }
