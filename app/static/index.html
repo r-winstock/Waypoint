@@ -25,6 +25,7 @@
 
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="/static/js/world-codes.js"></script>
 <script src="/static/js/map.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
 <script src="/static/js/app.js"></script>
@@ -173,8 +174,15 @@
               </template>
               <div class="grid-cards">
                 <template x-for="t in trips.data.trips" :key="t.id">
-                  <div class="trip-card" @click="openTrip(t.id)">
-                    <div class="banner"><div class="title" x-text="t.primary_city || t.primary_country || 'Trip'"></div></div>
+                  <div class="trip-card" x-data="{imgFailed: false}" @click="openTrip(t.id)">
+                    <div class="banner" :class="!imgFailed && (t.primary_city || t.primary_country) && 'has-photo'">
+                      <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(t.primary_city || t.primary_country)" @error="imgFailed = true">
+                      <div x-show="!imgFailed" class="card-photo-scrim"></div>
+                      <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(t.primary_city || t.primary_country); imgFailed = false" title="Refresh photo">
+                        <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                      </button>
+                      <div class="title" x-text="t.primary_city || t.primary_country || 'Trip'"></div>
+                    </div>
                     <div class="body">
                       <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatDateRange(t.start_ts, t.end_ts)"></div>
                       <div class="text-sm mt-1" x-text="t.days + ' day' + (t.days > 1 ? 's' : '') + (t.primary_country ? ' · ' + t.primary_country : '')"></div>
@@ -312,14 +320,21 @@
           <h2 class="text-lg font-semibold mb-3 display" x-text="places.category"></h2>
           <div class="grid-cards">
             <template x-for="p in (places.categoryData ? places.categoryData.places : [])" :key="p.id">
-              <div class="grid-card" style="cursor: default">
-                <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px" title="This place is wrong? Fix it"
+              <div class="grid-card grid-card--photo" x-data="{imgFailed: false}" style="cursor: default">
+                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(p.name || p.city, p.city)" @error="imgFailed = true">
+                <div x-show="!imgFailed" class="card-photo-scrim"></div>
+                <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(p.name || p.city); imgFailed = false" title="Refresh photo">
+                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                </button>
+                <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; z-index: 2" title="This place is wrong? Fix it"
                         @click="openPlaceEdit(p.id, p.name, places.category, p.city, null, null)">
                   <i data-lucide="pencil" class="w-3 h-3"></i>
                 </button>
-                <div class="title" x-text="p.name || 'Unnamed place'"></div>
-                <div class="subtitle" x-text="p.city || ''"></div>
-                <div class="text-xs mt-2" style="color: var(--wp-fg-dim)" x-text="p.visit_count + ' visit' + (p.visit_count > 1 ? 's' : '') + ' · last ' + formatRelative(p.last_visit_ts)"></div>
+                <div class="card-photo-content">
+                  <div class="title" x-text="p.name || 'Unnamed place'"></div>
+                  <div class="subtitle" x-text="p.city || ''"></div>
+                  <div class="text-xs mt-2" :style="imgFailed ? 'color: var(--wp-fg-dim)' : 'color: rgba(255,255,255,0.85)'" x-text="p.visit_count + ' visit' + (p.visit_count > 1 ? 's' : '') + ' · last ' + formatRelative(p.last_visit_ts)"></div>
+                </div>
               </div>
             </template>
           </div>
@@ -334,10 +349,17 @@
       </template>
       <div class="grid-cards">
         <template x-for="c in (cities.data ? cities.data.cities : [])" :key="c.name">
-          <div class="grid-card" style="cursor: default">
+          <div class="grid-card grid-card--photo" x-data="{imgFailed: false}" style="cursor: default">
+            <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name)" @error="imgFailed = true">
+            <div x-show="!imgFailed" class="card-photo-scrim"></div>
+            <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(c.name); imgFailed = false" title="Refresh photo">
+              <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+            </button>
             <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
-            <div class="title" x-text="c.name"></div>
-            <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+            <div class="card-photo-content">
+              <div class="title" x-text="c.name"></div>
+              <div class="subtitle" :style="imgFailed ? '' : 'color: rgba(255,255,255,0.85)'" x-text="formatRelative(c.last_visit_ts)"></div>
+            </div>
           </div>
         </template>
       </div>
@@ -345,6 +367,7 @@
 
     <!-- ═══════════ WORLD ═══════════ -->
     <div x-show="tab==='world'">
+      <div id="world-map-container" class="mb-5"></div>
       <template x-if="world.data && !world.data.countries.length">
         <div class="empty-state">No countries visited yet.</div>
       </template>

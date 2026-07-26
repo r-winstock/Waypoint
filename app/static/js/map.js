@@ -170,3 +170,41 @@ function wpRenderPins(map, pins) {
   if (latlngs.length) map.fitBounds(latlngs, { padding: [24, 24] });
   else map.setView([51.5, -0.1], 6);
 }
+
+// World view's choropleth. countries.geo.json (bundled, ~250KB simplified
+// geometry) keys each feature's "id" by ISO 3166-1 alpha-3, but the app's
+// own country_code fields are alpha-2 (what Nominatim/Google's addresses
+// give) - WP_ISO_A3_TO_A2 (world-codes.js) bridges the two rather than
+// re-deriving alpha-3 everywhere else in the app just for this one map.
+let _wpWorldGeoJsonCache = null;
+async function _wpLoadWorldGeoJson() {
+  if (_wpWorldGeoJsonCache) return _wpWorldGeoJsonCache;
+  const res = await fetch('/static/data/countries.geo.json');
+  _wpWorldGeoJsonCache = await res.json();
+  return _wpWorldGeoJsonCache;
+}
+
+async function wpRenderWorldMap(map, visitedCodes) {
+  wpClearLayers(map);
+  const geojson = await _wpLoadWorldGeoJson();
+  const visitedColor = getComputedStyle(document.documentElement).getPropertyValue('--wp-accent').trim() || '#3b82f6';
+  const unvisitedColor = getComputedStyle(document.documentElement).getPropertyValue('--wp-border').trim() || '#cbd5e1';
+
+  const layer = L.geoJSON(geojson, {
+    style: (feature) => {
+      const a2 = WP_ISO_A3_TO_A2[feature.id];
+      const visited = a2 && visitedCodes.has(a2);
+      return {
+        fillColor: visited ? visitedColor : unvisitedColor,
+        fillOpacity: visited ? 0.65 : 0.25,
+        color: getComputedStyle(document.documentElement).getPropertyValue('--wp-border').trim() || '#94a3b8',
+        weight: 1,
+      };
+    },
+    onEachFeature: (feature, l) => {
+      l.bindPopup(feature.properties.name);
+    },
+  });
+  wpAddLayer(map, layer);
+  map.fitBounds(layer.getBounds());
+}

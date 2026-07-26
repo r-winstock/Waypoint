@@ -268,6 +268,26 @@ h1, h2, h3, .display {
 .grid-card .title { font-family: var(--wp-font-display); font-size: 18px; margin: 4px 0 2px; }
 .grid-card .subtitle { font-size: 12.5px; color: var(--wp-fg-dim); }
 
+/* Photo-backed variant (Cities, individual Places) - a cached representative
+   photo as the card's background with a dark scrim for text contrast,
+   rather than the flat surface colour every other card uses. */
+.grid-card--photo { padding: 0; min-height: 170px; display: flex; align-items: flex-end; }
+.grid-card--photo .card-photo-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.grid-card--photo .card-photo-scrim {
+  position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(to top, rgba(10, 10, 10, 0.8), rgba(10, 10, 10, 0.15) 65%, transparent);
+}
+.grid-card--photo .card-photo-content { position: relative; z-index: 2; padding: 16px; width: 100%; }
+.grid-card--photo .card-photo-content .title { color: #fff; }
+.grid-card--photo .card-photo-content .subtitle { color: rgba(255, 255, 255, 0.85); }
+.grid-card--photo .count-badge { z-index: 2; }
+.card-photo-refresh {
+  position: absolute; top: 12px; left: 14px; z-index: 2;
+  width: 26px; height: 26px; opacity: 0; transition: opacity 0.15s;
+  background: rgba(0, 0, 0, 0.4); border-color: rgba(255, 255, 255, 0.3); color: #fff;
+}
+.grid-card--photo:hover .card-photo-refresh { opacity: 1; }
+
 /* ─── Day timeline ─── */
 .day-row {
   display: flex; align-items: flex-start; gap: 12px;
@@ -292,12 +312,21 @@ h1, h2, h3, .display {
   cursor: pointer;
 }
 .trip-card:hover { background: var(--wp-surface-1-hover); }
+.trip-card { position: relative; }
 .trip-card .banner {
-  height: 90px;
+  position: relative;
+  height: 130px;
   background: linear-gradient(135deg, var(--wp-accent-bg), var(--wp-surface-3));
   display: flex; align-items: flex-end; padding: 12px 16px;
+  overflow: hidden;
 }
-.trip-card .banner .title { font-family: var(--wp-font-display); font-size: 20px; color: var(--wp-fg-primary); }
+.trip-card .banner .card-photo-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.trip-card .banner .card-photo-scrim {
+  position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(to top, rgba(10, 10, 10, 0.8), rgba(10, 10, 10, 0.1) 65%, transparent);
+}
+.trip-card .banner .title { position: relative; z-index: 2; font-family: var(--wp-font-display); font-size: 20px; color: var(--wp-fg-primary); }
+.trip-card .banner.has-photo .title { color: #fff; }
 .trip-card .body { padding: 12px 16px; }
 
 /* ─── Empty / loading states ─── */
@@ -307,7 +336,7 @@ h1, h2, h3, .display {
 /* Leaflet needs an explicit height on its container or it collapses to 0 and
    never renders - only #map-container (Day view) ever had one; the Trips
    overview map and the Trip detail map shared no rule at all. */
-#map-container, #trips-map-container, #trip-detail-map-container {
+#map-container, #trips-map-container, #trip-detail-map-container, #world-map-container {
   height: 320px; border-radius: var(--wp-radius-card); border: 1px solid var(--wp-border); overflow: hidden;
 }
 .leaflet-popup-content-wrapper { background: var(--wp-map-popup-bg); color: var(--wp-map-popup-fg); border-radius: 8px; }

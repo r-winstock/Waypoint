@@ -97,7 +97,7 @@ function waypoint() {
     insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false },
     places: { data: null, loading: false, category: null, categoryData: null },
     cities: { data: null, loading: false },
-    world: { data: null, loading: false },
+    world: { data: null, loading: false, map: null },
 
     placeEdit: {
       open: false, placeId: null, name: '', category: 'Other places', city: '', country: '', countryCode: '',
@@ -124,6 +124,26 @@ function waypoint() {
     categoryIcon(cat) { return CATEGORY_ICONS[cat] || '\u{1F4CD}'; },
     modeIcon(mode) { return MODE_ICONS[mode] || 'move'; },
     entryLineHeight,
+
+    // ─── card photos (Trips/Cities/Places) ───
+    // Cache-busted per query so a manual refresh actually shows the new
+    // photo immediately rather than the browser reusing its own cached
+    // response for the same URL.
+    imageCacheBust: {},
+    imageUrl(query, fallback) {
+      if (!query) return '';
+      const v = this.imageCacheBust[query] || 0;
+      const params = new URLSearchParams({ q: query, v });
+      if (fallback && fallback !== query) params.set('fallback', fallback);
+      return `/api/images?${params}`;
+    },
+    async refreshCardImage(query) {
+      if (!query) return;
+      try {
+        await fetch(`/api/images/refresh?q=${encodeURIComponent(query)}`, { method: 'POST' });
+      } catch (e) { console.error('Failed to refresh image', e); }
+      this.imageCacheBust[query] = (this.imageCacheBust[query] || 0) + 1;
+    },
 
     init() {
       this.applyTheme(this.theme);
@@ -154,6 +174,7 @@ function waypoint() {
         if (tab === 'day' && this.day.map) this.day.map.invalidateSize();
         if (tab === 'trips' && this.trips.map) this.trips.map.invalidateSize();
         if (tab === 'trips' && this.trips.detailMap) this.trips.detailMap.invalidateSize();
+        if (tab === 'world' && this.world.map) this.world.map.invalidateSize();
       });
     },
 
@@ -311,8 +332,14 @@ function waypoint() {
       try {
         const res = await fetch('/api/world');
         this.world.data = await res.json();
+        this.$nextTick(() => this.renderWorldMap());
       } catch (e) { console.error('Failed to load world', e); }
       finally { this.world.loading = false; }
+    },
+    renderWorldMap() {
+      if (!this.world.map) this.world.map = wpInitMap('world-map-container');
+      const visitedCodes = new Set(this.world.data.countries.map((c) => c.country_code).filter(Boolean));
+      wpRenderWorldMap(this.world.map, visitedCodes);
     },
 
     // ─── Place correction ───

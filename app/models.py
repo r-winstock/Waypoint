@@ -121,3 +121,26 @@ class Settings(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class CachedImage(Base):
+    """A representative photo for a card background (Trips/Places/Cities),
+    fetched once from Wikipedia and kept locally rather than re-fetched on
+    every page load. Keyed by a slugified search term (city/place/country
+    name), not by a foreign key to Place/Trip/City - the same city name is
+    shared by many places/trips, so one row covers all of them.
+
+    found=False with image_path=None is itself a cached result (Wikipedia
+    had nothing for this query) - without it, every card for a place with
+    no findable photo would re-query Wikipedia on every single page load.
+    Only an explicit refresh re-attempts it.
+    """
+
+    __tablename__ = "cached_images"
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    query: Mapped[str] = mapped_column(String(255))
+    image_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    found: Mapped[bool] = mapped_column(default=False)
+    fetched_at: Mapped[int] = mapped_column(Integer)
