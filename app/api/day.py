@@ -54,6 +54,7 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
                 "end_ts": v.end_ts,
                 "lat": v.lat,
                 "lon": v.lon,
+                "place_id": v.place_id,
                 "place_name": v.place.name if v.place else None,
                 "category": v.place.category if v.place else None,
                 "city": v.place.city if v.place else None,
@@ -72,13 +73,13 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
         )
     timeline.sort(key=lambda e: e["start_ts"])
 
-    stats = {"driving_m": 0.0, "driving_s": 0.0, "flying_m": 0.0, "flying_s": 0.0, "walking_m": 0.0, "walking_s": 0.0}
-    mode_key = {"driving": "driving", "flying": "flying", "walking": "walking"}
+    # Dynamic by whatever modes actually occur today - was hardcoded to just
+    # driving/flying/walking, which silently dropped cycling/taxi/bus/train/
+    # subway/tram/ferry distance from the stat tiles once those modes existed.
+    stats: dict[str, float] = {}
     for s in segments:
-        key = mode_key.get(s.mode)
-        if key:
-            stats[f"{key}_m"] += s.distance_m
-            stats[f"{key}_s"] += s.duration_s
+        stats[f"{s.mode}_m"] = stats.get(f"{s.mode}_m", 0.0) + s.distance_m
+        stats[f"{s.mode}_s"] = stats.get(f"{s.mode}_s", 0.0) + s.duration_s
 
     return {
         "date": day_str,

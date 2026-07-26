@@ -33,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.db import SessionLocal, init_db  # noqa: E402
 from app.geocoding import resolve_place  # noqa: E402
 from app.models import TripSegment, Visit  # noqa: E402
-from app.processing import RawPoint, classify_mode_by_speed, distance_and_duration  # noqa: E402
 from app.processing import _rebuild_trips  # noqa: E402
 
 COMMIT_EVERY = 200
@@ -120,30 +119,6 @@ def import_activity(session, seg: dict) -> bool:
     return True
 
 
-def import_timeline_path(session, seg: dict) -> bool:
-    path = seg.get("timelinePath", [])
-    if len(path) < 2:
-        return False
-    points = [RawPoint(*parse_latlng(p["point"]), parse_ts(p["time"])) for p in path]
-    points.sort(key=lambda p: p.tst)
-    distance_m, duration_s = distance_and_duration(points)
-    if duration_s <= 0 or distance_m <= 0:
-        return False
-    avg_kmh = (distance_m / 1000.0) / (duration_s / 3600.0)
-    mode = classify_mode_by_speed(avg_kmh)
-    session.add(
-        TripSegment(
-            start_ts=points[0].tst,
-            end_ts=points[-1].tst,
-            mode=mode,
-            distance_m=distance_m,
-            duration_s=duration_s,
-            source="google_import",
-        )
-    )
-    return True
-
-
 def run(json_path: Path) -> None:
     init_db()
     session = SessionLocal()
@@ -162,11 +137,17 @@ def run(json_path: Path) -> None:
                         ok = import_activity(session, seg)
                         segments += ok
                         skipped += not ok
-                    elif "timelinePath" in seg:
-                        ok = import_timeline_path(session, seg)
-                        segments += ok
-                        skipped += not ok
                     else:
+                        # timelinePath entries are Google's own low-confidence
+                        # fallback for stretches it couldn't classify - naively
+                        # turning those into segments (an earlier version of
+                        # this script did) produced fabricated travel that
+                        # duplicated/overlapped Google's own confident activity
+                        # segments (e.g. a real 13-minute drive also showing up
+                        # as a bogus "cycling" leg) and phantom multi-hour
+                        # "walking" out of GPS jitter while stationary at home.
+                        # A gap in the Day timeline is more honest than
+                        # confidently-wrong data.
                         skipped += 1
                 except (KeyError, ValueError, TypeError) as e:
                     skipped += 1

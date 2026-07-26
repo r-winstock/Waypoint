@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 
 import httpx
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models import Place
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 USER_AGENT = "Waypoint/0.1 (self-hosted personal timeline; contact rwinstock@hotmail.com)"
 
 # Nominatim's usage policy caps anonymous use at 1 request/second.
@@ -61,6 +63,74 @@ def _categorise(osm_category: str | None, osm_type: str | None) -> str:
     if isinstance(rule, dict):
         return rule.get(osm_type or "", "Other places")
     return "Other places"
+
+
+def _categorise_tags(tags: dict) -> str:
+    """Same category rules as _categorise, but against a raw OSM tags dict
+    (what Overpass returns) rather than Nominatim's single category/type
+    pair - used by find_nearby_places."""
+    for key in ("amenity", "shop", "tourism", "historic", "leisure", "sport", "aeroway"):
+        if key in tags:
+            cat = _categorise(key, tags[key])
+            if cat != "Other places":
+                return cat
+    return "Other places"
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    # Duplicated from app.processing (not imported) to avoid a circular
+    # import - processing.py already imports resolve_place from this module.
+    r = 6_371_000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def find_nearby_places(lat: float, lon: float, radius_m: float = 100.0, limit: int = 15) -> list[dict]:
+    """Named OSM features near a coordinate, for the "this place is wrong,
+    pick the right one" correction UI - Nominatim's reverse endpoint only
+    ever returns its single best guess, so this uses Overpass (the standard
+    tool for "what's nearby", also free/no-API-key like Nominatim)."""
+    query = f"""
+    [out:json][timeout:10];
+    (
+      node(around:{radius_m},{lat},{lon})[name];
+      way(around:{radius_m},{lat},{lon})[name];
+    );
+    out center {limit};
+    """
+    try:
+        resp = httpx.post(
+            OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=15.0
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return []
+
+    results = []
+    for el in data.get("elements", []):
+        tags = el.get("tags", {})
+        name = tags.get("name")
+        el_lat = el.get("lat") or el.get("center", {}).get("lat")
+        el_lon = el.get("lon") or el.get("center", {}).get("lon")
+        if not name or el_lat is None or el_lon is None:
+            continue
+        results.append(
+            {
+                "osm_type": el.get("type"),
+                "osm_id": el.get("id"),
+                "name": name,
+                "category": _categorise_tags(tags),
+                "lat": el_lat,
+                "lon": el_lon,
+                "distance_m": round(_haversine_m(lat, lon, el_lat, el_lon)),
+            }
+        )
+    results.sort(key=lambda r: r["distance_m"])
+    return results
 
 
 def _throttle() -> None:

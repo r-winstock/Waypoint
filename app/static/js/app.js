@@ -60,6 +60,8 @@ const CATEGORY_ICONS = {
   'Other places': '\u{1F4CD}',
 };
 
+const CATEGORY_OPTIONS = Object.keys(CATEGORY_ICONS);
+
 function waypoint() {
   return {
     theme: localStorage.getItem('waypoint-theme') || 'atlas',
@@ -72,6 +74,12 @@ function waypoint() {
     places: { data: null, loading: false, category: null, categoryData: null },
     cities: { data: null, loading: false },
     world: { data: null, loading: false },
+
+    placeEdit: {
+      open: false, placeId: null, name: '', category: 'Other places', city: '', country: '', countryCode: '',
+      alternatives: [], loadingAlternatives: false, saving: false,
+    },
+    categoryOptions: CATEGORY_OPTIONS,
 
     // ─── formatters exposed to templates ───
     formatMiles,
@@ -132,6 +140,18 @@ function waypoint() {
     renderDayMap() {
       if (!this.day.map) this.day.map = wpInitMap('map-container');
       wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline);
+    },
+    dayStatModes() {
+      if (!this.day.data) return [];
+      const modes = new Set();
+      for (const key of Object.keys(this.day.data.stats)) {
+        if (key.endsWith('_m')) modes.add(key.slice(0, -2));
+      }
+      return [...modes].map((mode) => ({
+        mode,
+        distance_m: this.day.data.stats[`${mode}_m`] || 0,
+        duration_s: this.day.data.stats[`${mode}_s`] || 0,
+      }));
     },
 
     // ─── Trips ───
@@ -213,6 +233,62 @@ function waypoint() {
         this.world.data = await res.json();
       } catch (e) { console.error('Failed to load world', e); }
       finally { this.world.loading = false; }
+    },
+
+    // ─── Place correction ───
+    // Nominatim only ever gives its single best guess, and that guess is
+    // often wrong (a neighbouring building, a generic street match). This
+    // lets you pick the right real place from what's actually nearby
+    // (Overpass query server-side), or just type the correct name/category
+    // yourself - matching Google Timeline's own "fix this place" flow.
+    async openPlaceEdit(placeId, name, category, city, country, countryCode) {
+      if (!placeId) return;
+      this.placeEdit = {
+        open: true, placeId, name: name || '', category: category || 'Other places',
+        city: city || '', country: country || '', countryCode: countryCode || '',
+        alternatives: [], loadingAlternatives: true, saving: false,
+      };
+      try {
+        const res = await fetch(`/api/places/detail/${placeId}/nearby`);
+        const data = await res.json();
+        this.placeEdit.alternatives = data.alternatives || [];
+      } catch (e) { console.error('Failed to load nearby alternatives', e); }
+      finally { this.placeEdit.loadingAlternatives = false; }
+    },
+    selectAlternative(alt) {
+      // City/country are left as-is: alternatives are all within ~100m of
+      // the same spot, so they're overwhelmingly likely to share the same
+      // city/country as whatever was already resolved there.
+      this.placeEdit.name = alt.name;
+      this.placeEdit.category = alt.category;
+    },
+    closePlaceEdit() { this.placeEdit.open = false; },
+    async savePlaceEdit() {
+      this.placeEdit.saving = true;
+      try {
+        await fetch(`/api/places/detail/${this.placeEdit.placeId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: this.placeEdit.name,
+            category: this.placeEdit.category,
+            city: this.placeEdit.city || null,
+            country: this.placeEdit.country || null,
+            country_code: this.placeEdit.countryCode || null,
+          }),
+        });
+        this.placeEdit.open = false;
+        await this.refreshCurrentTab();
+      } catch (e) { console.error('Failed to save place correction', e); }
+      finally { this.placeEdit.saving = false; }
+    },
+    async refreshCurrentTab() {
+      if (this.tab === 'day') return this.loadDay();
+      if (this.tab === 'trips') return this.loadTrips();
+      if (this.tab === 'places' && this.places.category) return this.openCategory(this.places.category);
+      if (this.tab === 'places') return this.loadPlaces();
+      if (this.tab === 'cities') return this.loadCities();
+      if (this.tab === 'world') return this.loadWorld();
     },
   };
 }

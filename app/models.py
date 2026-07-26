@@ -43,6 +43,10 @@ class Place(Base):
     country: Mapped[str | None] = mapped_column(String(128), nullable=True)
     country_code: Mapped[str | None] = mapped_column(String(4), nullable=True)
     raw_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # True once a user has corrected this place via /api/places/{id} - purely
+    # informational (the UI badges it), since normal cache lookups never
+    # overwrite an existing Place's fields regardless of this flag.
+    manually_corrected: Mapped[bool] = mapped_column(default=False)
 
     visits: Mapped[list["Visit"]] = relationship(back_populates="place")
 
