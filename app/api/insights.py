@@ -13,7 +13,12 @@ from app.models import Place, TripSegment, Visit
 router = APIRouter()
 
 TREND_MONTHS = 6
-TRAVEL_MODES = ["walking", "driving", "flying"]
+# Display order when present - not an allow-list. A mode only appears in the
+# response if it actually has data; this just keeps the order consistent
+# (walking first, flying last) rather than whatever order the query returns.
+TRAVEL_MODE_ORDER = [
+    "walking", "cycling", "driving", "taxi", "bus", "train", "subway", "tram", "ferry", "flying",
+]
 VISIT_CATEGORIES = ["Food and drink", "Shopping", "Hotels", "Culture", "Sports", "Airports", "Other places"]
 
 
@@ -72,6 +77,11 @@ def get_insights(year: int, month: int, session: Session = Depends(db_dependency
         for category, duration_s in _visit_totals(session, m_start, m_end).items():
             visit_trend[category][i] = duration_s
 
+    modes_with_data = sorted(
+        set(travel) | {m for m, t in travel_trend.items() if sum(t) > 0},
+        key=lambda m: TRAVEL_MODE_ORDER.index(m) if m in TRAVEL_MODE_ORDER else len(TRAVEL_MODE_ORDER),
+    )
+
     return {
         "year": year,
         "month": month,
@@ -81,7 +91,7 @@ def get_insights(year: int, month: int, session: Session = Depends(db_dependency
                 "duration_s": travel.get(mode, {}).get("duration_s", 0.0),
                 "trend": travel_trend[mode],
             }
-            for mode in TRAVEL_MODES
+            for mode in modes_with_data
         },
         "visits": {
             category: {"duration_s": visits.get(category, 0.0), "trend": visit_trend[category]}

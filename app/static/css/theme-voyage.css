@@ -62,7 +62,14 @@
 
   /* Travel modes */
   --wp-mode-walking: #3f7a5c;
+  --wp-mode-cycling: #6b8e4e;
   --wp-mode-driving: #b07f2e;
+  --wp-mode-taxi: #c9a227;
+  --wp-mode-bus: #b5651d;
+  --wp-mode-train: #4a6670;
+  --wp-mode-subway: #7c5295;
+  --wp-mode-tram: #2f7d7d;
+  --wp-mode-ferry: #35586b;
   --wp-mode-flying: #a4432f;
 
   /* Leaflet popup */

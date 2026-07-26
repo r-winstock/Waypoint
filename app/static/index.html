@@ -168,19 +168,22 @@
         <div>
           <h2 class="text-base font-semibold mb-2">Travel</h2>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-            <template x-for="mode in ['walking','driving','flying']" :key="mode">
+            <template x-for="(t, mode) in insights.data.travel" :key="mode">
               <div class="stat-tile flex items-center justify-between">
                 <div>
                   <div class="label capitalize" x-text="mode"></div>
-                  <div class="value" x-text="formatMiles(insights.data.travel[mode].distance_m)"></div>
-                  <div class="detail" x-text="formatDuration(insights.data.travel[mode].duration_s)"></div>
+                  <div class="value" x-text="formatMiles(t.distance_m)"></div>
+                  <div class="detail" x-text="formatDuration(t.duration_s)"></div>
                 </div>
                 <div class="flex items-end gap-1" style="height: 32px">
-                  <template x-for="(h, idx) in sparklineHeights(insights.data.travel[mode].trend)" :key="idx">
+                  <template x-for="(h, idx) in sparklineHeights(t.trend)" :key="idx">
                     <div class="sparkline-bar" :style="`height:${h}px; background: var(--wp-mode-${mode})`"></div>
                   </template>
                 </div>
               </div>
+            </template>
+            <template x-if="!Object.keys(insights.data.travel).length">
+              <div class="empty-state">No travel recorded this month.</div>
             </template>
           </div>
 

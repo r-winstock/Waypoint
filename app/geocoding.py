@@ -71,8 +71,23 @@ def _throttle() -> None:
     _last_call = time.monotonic()
 
 
-def resolve_place(session: Session, lat: float, lon: float) -> Place | None:
-    """Look up (or reverse-geocode and cache) the place at these coordinates."""
+def resolve_place(
+    session: Session, lat: float, lon: float, google_place_id: str | None = None
+) -> Place | None:
+    """Look up (or reverse-geocode and cache) the place at these coordinates.
+
+    Checks google_place_id first when given (Google's Timeline import): it's
+    a precise, stable identifier, so it catches repeat visits to the same
+    place even if rounded coordinates drift slightly between visits. Falls
+    back to the rounded-coordinate cache either way.
+    """
+
+    if google_place_id is not None:
+        cached_by_id = (
+            session.query(Place).filter(Place.google_place_id == google_place_id).one_or_none()
+        )
+        if cached_by_id is not None:
+            return cached_by_id
 
     lat_r, lon_r = round(lat, ROUND_DP), round(lon, ROUND_DP)
     cached = (
@@ -81,10 +96,12 @@ def resolve_place(session: Session, lat: float, lon: float) -> Place | None:
         .one_or_none()
     )
     if cached is not None:
+        if google_place_id is not None and cached.google_place_id is None:
+            cached.google_place_id = google_place_id
         return cached
 
     data = _reverse_geocode(lat, lon)
-    place = Place(lat_round=lat_r, lon_round=lon_r)
+    place = Place(lat_round=lat_r, lon_round=lon_r, google_place_id=google_place_id)
     if data is not None:
         address = data.get("address", {})
         place.name = data.get("name") or address.get("road") or data.get("display_name")

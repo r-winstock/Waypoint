@@ -14,13 +14,29 @@ from app.models import LocationPoint, Trip, TripSegment, Visit
 STAY_RADIUS_M = 150.0
 STAY_MIN_SECONDS = 8 * 60
 
-# Mode thresholds, average km/h over a trip segment.
+# Safety-net merge for visits the clustering above still split apart - two
+# consecutive visits this close in both space and time get stitched back
+# into one. Larger than STAY_RADIUS_M since it's specifically catching drift
+# that crossed that boundary.
+VISIT_MERGE_RADIUS_M = 250.0
+VISIT_MERGE_MAX_GAP_S = 3 * 3600
+
+# Mode thresholds, average km/h over a trip segment. Only distinguishes what
+# GPS speed alone can tell apart - a taxi and a car look identical from
+# speed, so those finer distinctions only exist where Google's own Timeline
+# import already classified them (see scripts/import_google_timeline.py).
 WALK_MAX_KMH = 7.0
+CYCLE_MAX_KMH = 25.0
 FLY_MIN_KMH = 140.0
 
 # Segments shorter than this are noise (GPS drift between two visits at
 # effectively the same spot) and are dropped rather than recorded.
 MIN_SEGMENT_DISTANCE_M = 20.0
+
+# A stretch away from home shorter than this doesn't count as a "trip" - see
+# _flush_trip_run for why (routine errands outside the home radius otherwise
+# flood the Trips view).
+TRIP_MIN_DURATION_S = 6 * 3600
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -32,11 +48,42 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def classify_mode_by_speed(avg_kmh: float) -> str:
+    """Speed-only mode classification, shared by the OwnTracks pipeline and
+    the Google Timeline import's timelinePath segments (movement Google
+    itself didn't confidently classify)."""
+    if avg_kmh > FLY_MIN_KMH:
+        return "flying"
+    if avg_kmh > CYCLE_MAX_KMH:
+        return "driving"
+    if avg_kmh > WALK_MAX_KMH:
+        return "cycling"
+    return "walking"
+
+
+def distance_and_duration(points: list[RawPoint]) -> tuple[float, float]:
+    """Total haversine distance and elapsed time over an ordered list of
+    points - shared by the OwnTracks pipeline's raw-point legs and the
+    Google Timeline import's timelinePath segments."""
+    distance_m = sum(haversine_m(a.lat, a.lon, b.lat, b.lon) for a, b in zip(points, points[1:]))
+    duration_s = points[-1].tst - points[0].tst
+    return distance_m, duration_s
+
+
 @dataclass
 class RawPoint:
     lat: float
     lon: float
     tst: int
+
+
+@dataclass
+class VisitCandidate:
+    start_ts: int
+    end_ts: int
+    lat: float
+    lon: float
+    point_count: int
 
 
 def process_all(session: Session) -> None:
@@ -60,39 +107,81 @@ def process_all(session: Session) -> None:
     session.commit()
 
 
-def _rebuild_visits(session: Session, points: list[RawPoint]) -> None:
-    session.execute(delete(Visit))
-
+def _cluster_stay_points(points: list[RawPoint]) -> list[VisitCandidate]:
+    candidates: list[VisitCandidate] = []
     n = len(points)
     i = 0
     while i < n:
         j = i
-        while j + 1 < n and haversine_m(points[i].lat, points[i].lon, points[j + 1].lat, points[j + 1].lon) <= STAY_RADIUS_M:
+        sum_lat, sum_lon, count = points[i].lat, points[i].lon, 1
+        while j + 1 < n:
+            # Compared against the cluster's running centroid, not a fixed
+            # first-point anchor - a fixed anchor falsely "closes" a long
+            # stay the moment normal GPS/WiFi positioning drifts past the
+            # radius from that one original sample, even though the phone
+            # never actually moved (this is exactly what produced phantom
+            # multi-hour "walking" segments between visits that were both
+            # really just "at home all day").
+            centroid_lat, centroid_lon = sum_lat / count, sum_lon / count
+            if haversine_m(centroid_lat, centroid_lon, points[j + 1].lat, points[j + 1].lon) > STAY_RADIUS_M:
+                break
             j += 1
+            sum_lat += points[j].lat
+            sum_lon += points[j].lon
+            count += 1
 
         duration = points[j].tst - points[i].tst
         if duration >= STAY_MIN_SECONDS:
-            cluster = points[i : j + 1]
-            centroid_lat = sum(p.lat for p in cluster) / len(cluster)
-            centroid_lon = sum(p.lon for p in cluster) / len(cluster)
-            session.add(
-                Visit(
-                    start_ts=points[i].tst,
-                    end_ts=points[j].tst,
-                    lat=centroid_lat,
-                    lon=centroid_lon,
-                    point_count=len(cluster),
-                )
-            )
+            candidates.append(VisitCandidate(points[i].tst, points[j].tst, sum_lat / count, sum_lon / count, count))
             i = j + 1
         else:
             i += 1
+    return candidates
+
+
+def _merge_nearby_visits(candidates: list[VisitCandidate]) -> list[VisitCandidate]:
+    """Safety-net pass: stitches adjacent visits back together when close in
+    both space and time - catches drift that crossed STAY_RADIUS_M right at
+    a cluster boundary and still split what should be one continuous stay."""
+    if not candidates:
+        return []
+    merged = [candidates[0]]
+    for cand in candidates[1:]:
+        prev = merged[-1]
+        gap_s = cand.start_ts - prev.end_ts
+        distance_m = haversine_m(prev.lat, prev.lon, cand.lat, cand.lon)
+        if gap_s <= VISIT_MERGE_MAX_GAP_S and distance_m <= VISIT_MERGE_RADIUS_M:
+            total = prev.point_count + cand.point_count
+            merged[-1] = VisitCandidate(
+                start_ts=prev.start_ts,
+                end_ts=cand.end_ts,
+                lat=(prev.lat * prev.point_count + cand.lat * cand.point_count) / total,
+                lon=(prev.lon * prev.point_count + cand.lon * cand.point_count) / total,
+                point_count=total,
+            )
+        else:
+            merged.append(cand)
+    return merged
+
+
+def _rebuild_visits(session: Session, points: list[RawPoint]) -> None:
+    # Only ever touches OwnTracks-derived visits - imported history
+    # (source="google_import") is written once and never rebuilt.
+    session.execute(delete(Visit).where(Visit.source == "owntracks"))
+
+    candidates = _merge_nearby_visits(_cluster_stay_points(points))
+    for v in candidates:
+        session.add(Visit(start_ts=v.start_ts, end_ts=v.end_ts, lat=v.lat, lon=v.lon, point_count=v.point_count))
 
 
 def _rebuild_trip_segments(session: Session, points: list[RawPoint]) -> None:
-    session.execute(delete(TripSegment))
+    # Same source-scoping as _rebuild_visits - never touches imported segments.
+    session.execute(delete(TripSegment).where(TripSegment.source == "owntracks"))
 
-    visits = session.query(Visit).order_by(Visit.start_ts).all()
+    # Only pairs OwnTracks-derived visits - imported visits already have their
+    # own Google-classified segments and don't need raw-point legs synthesised
+    # between them (there are none: location_points only holds live pings).
+    visits = session.query(Visit).filter(Visit.source == "owntracks").order_by(Visit.start_ts).all()
     if len(visits) < 2:
         return
 
@@ -108,20 +197,12 @@ def _rebuild_trip_segments(session: Session, points: list[RawPoint]) -> None:
         if len(leg) < 2:
             continue
 
-        distance_m = sum(
-            haversine_m(a.lat, a.lon, b.lat, b.lon) for a, b in zip(leg, leg[1:])
-        )
-        duration_s = leg[-1].tst - leg[0].tst
+        distance_m, duration_s = distance_and_duration(leg)
         if distance_m < MIN_SEGMENT_DISTANCE_M or duration_s <= 0:
             continue
 
         avg_kmh = (distance_m / 1000.0) / (duration_s / 3600.0)
-        if avg_kmh > FLY_MIN_KMH:
-            mode = "flying"
-        elif avg_kmh > WALK_MAX_KMH:
-            mode = "driving"
-        else:
-            mode = "walking"
+        mode = classify_mode_by_speed(avg_kmh)
 
         session.add(
             TripSegment(
@@ -192,24 +273,33 @@ def _rebuild_trips(session: Session) -> None:
 def _flush_trip_run(session: Session, run: list[Visit]) -> None:
     if not run:
         return
+    # Below this, it's a routine local errand outside the home radius (a
+    # supermarket run a mile out), not a trip - real data testing found the
+    # radius check alone let through hundreds of these. Chosen as "away long
+    # enough that it's not a same-afternoon errand"; adjust if it over- or
+    # under-shoots what actually reads as a trip once you look at it.
+    if run[-1].end_ts - run[0].start_ts < TRIP_MIN_DURATION_S:
+        return
 
     trip = Trip(start_ts=run[0].start_ts, end_ts=run[-1].end_ts)
 
     city_duration: Counter[str] = Counter()
-    country: str | None = None
-    country_code: str | None = None
+    city_country: dict[str, tuple[str | None, str | None]] = {}
     for visit in run:
         duration = max(visit.end_ts - visit.start_ts, 60)
         if visit.place and visit.place.city:
             city_duration[visit.place.city] += duration
-        if visit.place and visit.place.country:
-            country = visit.place.country
-            country_code = visit.place.country_code
+            # Country tied to whichever city it belongs to, not just
+            # whichever visit happens to be iterated last - a trip run can
+            # include a UK-based visit (e.g. the airport) alongside the
+            # actual foreign destination, and country must follow
+            # primary_city, not run order.
+            city_country[visit.place.city] = (visit.place.country, visit.place.country_code)
 
     if city_duration:
-        trip.primary_city = city_duration.most_common(1)[0][0]
-    trip.primary_country = country
-    trip.primary_country_code = country_code
+        primary_city = city_duration.most_common(1)[0][0]
+        trip.primary_city = primary_city
+        trip.primary_country, trip.primary_country_code = city_country[primary_city]
 
     session.add(trip)
     session.flush()

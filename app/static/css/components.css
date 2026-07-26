@@ -123,7 +123,14 @@ h1, h2, h3, .display {
 .pill-cat-other-places     { background: color-mix(in srgb, var(--wp-cat-other) 18%, transparent); color: var(--wp-cat-other); border-color: var(--wp-cat-other); }
 
 .pill-mode-walking  { background: color-mix(in srgb, var(--wp-mode-walking) 18%, transparent); color: var(--wp-mode-walking); border-color: var(--wp-mode-walking); }
+.pill-mode-cycling  { background: color-mix(in srgb, var(--wp-mode-cycling) 18%, transparent); color: var(--wp-mode-cycling); border-color: var(--wp-mode-cycling); }
 .pill-mode-driving  { background: color-mix(in srgb, var(--wp-mode-driving) 18%, transparent); color: var(--wp-mode-driving); border-color: var(--wp-mode-driving); }
+.pill-mode-taxi     { background: color-mix(in srgb, var(--wp-mode-taxi) 18%, transparent); color: var(--wp-mode-taxi); border-color: var(--wp-mode-taxi); }
+.pill-mode-bus      { background: color-mix(in srgb, var(--wp-mode-bus) 18%, transparent); color: var(--wp-mode-bus); border-color: var(--wp-mode-bus); }
+.pill-mode-train    { background: color-mix(in srgb, var(--wp-mode-train) 18%, transparent); color: var(--wp-mode-train); border-color: var(--wp-mode-train); }
+.pill-mode-subway   { background: color-mix(in srgb, var(--wp-mode-subway) 18%, transparent); color: var(--wp-mode-subway); border-color: var(--wp-mode-subway); }
+.pill-mode-tram     { background: color-mix(in srgb, var(--wp-mode-tram) 18%, transparent); color: var(--wp-mode-tram); border-color: var(--wp-mode-tram); }
+.pill-mode-ferry    { background: color-mix(in srgb, var(--wp-mode-ferry) 18%, transparent); color: var(--wp-mode-ferry); border-color: var(--wp-mode-ferry); }
 .pill-mode-flying   { background: color-mix(in srgb, var(--wp-mode-flying) 18%, transparent); color: var(--wp-mode-flying); border-color: var(--wp-mode-flying); }
 
 /* ─── Stat tiles (Insights) ─── */

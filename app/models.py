@@ -33,6 +33,10 @@ class Place(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     lat_round: Mapped[float] = mapped_column(Float, index=True)
     lon_round: Mapped[float] = mapped_column(Float, index=True)
+    # Google Timeline import's placeId - a precise, stable identifier, so it's
+    # checked before falling back to coordinate rounding (which could in
+    # theory collide two distinct nearby places into one cache entry).
+    google_place_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     category: Mapped[str] = mapped_column(String(64), default="Other places")
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -54,6 +58,10 @@ class Visit(Base):
     lat: Mapped[float] = mapped_column(Float)
     lon: Mapped[float] = mapped_column(Float)
     point_count: Mapped[int] = mapped_column(Integer, default=0)
+    # "owntracks" (rebuilt from location_points on every scheduler tick) or
+    # "google_import" (written once, never touched by the rebuild - see
+    # processing.py's _rebuild_visits, which only deletes source="owntracks").
+    source: Mapped[str] = mapped_column(String(16), default="owntracks", index=True)
 
     place_id: Mapped[int | None] = mapped_column(ForeignKey("places.id"), nullable=True)
     place: Mapped[Place | None] = relationship(back_populates="visits")
@@ -70,9 +78,12 @@ class TripSegment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     start_ts: Mapped[int] = mapped_column(Integer, index=True)
     end_ts: Mapped[int] = mapped_column(Integer, index=True)
-    mode: Mapped[str] = mapped_column(String(16))  # walking | driving | flying
+    # walking | cycling | driving | taxi | bus | train | subway | tram | ferry | flying
+    mode: Mapped[str] = mapped_column(String(16))
     distance_m: Mapped[float] = mapped_column(Float)
     duration_s: Mapped[float] = mapped_column(Float)
+    # see Visit.source - same reasoning, same rebuild-safety requirement.
+    source: Mapped[str] = mapped_column(String(16), default="owntracks", index=True)
 
     start_visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"), nullable=True)
     end_visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"), nullable=True)
