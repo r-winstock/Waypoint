@@ -24,6 +24,15 @@ TRAVEL_MODE_ORDER = [
 # category from a place correction) still appear, just after these.
 VISIT_CATEGORIES = ["Home", "Work", "Food and drink", "Shopping", "Hotels", "Culture", "Sports", "Airports", "Other places"]
 
+# Thresholds matched to what the frontend actually displays (formatMiles
+# rounds anything under 0.1mi to "0 mi", formatDuration rounds under 60s to
+# "0 min") - a card is only worth showing for the month currently being
+# viewed if it would show something other than that zero. Trend history is
+# a different question (a category can fade to nothing over 6 months and
+# that's worth seeing), so this only gates the *current* month's own card.
+TRAVEL_MIN_DISPLAY_M = 160.9344  # 0.1 mile
+VISIT_MIN_DISPLAY_S = 60
+
 
 def _month_bounds(year: int, month: int) -> tuple[int, int]:
     start = datetime(year, month, 1, tzinfo=timezone.utc)
@@ -80,9 +89,18 @@ def get_insights(year: int, month: int, session: Session = Depends(db_dependency
         for category, duration_s in _visit_totals(session, m_start, m_end).items():
             visit_trend[category][i] = duration_s
 
+    # A mode/category only gets a card this month if its *own* current-month
+    # total would show as something other than "0 mi"/"0 min" - having shown
+    # up somewhere in the 6-month trend isn't enough on its own (that's what
+    # produced e.g. a "Bus: 0 mi" card most months for someone who took one
+    # bus trip 4 months ago).
     modes_with_data = sorted(
-        set(travel) | {m for m, t in travel_trend.items() if sum(t) > 0},
+        {m for m, t in travel.items() if t["distance_m"] >= TRAVEL_MIN_DISPLAY_M},
         key=lambda m: TRAVEL_MODE_ORDER.index(m) if m in TRAVEL_MODE_ORDER else len(TRAVEL_MODE_ORDER),
+    )
+    categories_with_data = sorted(
+        {c for c, duration_s in visits.items() if duration_s >= VISIT_MIN_DISPLAY_S},
+        key=lambda c: VISIT_CATEGORIES.index(c) if c in VISIT_CATEGORIES else len(VISIT_CATEGORIES),
     )
 
     return {
@@ -90,17 +108,14 @@ def get_insights(year: int, month: int, session: Session = Depends(db_dependency
         "month": month,
         "travel": {
             mode: {
-                "distance_m": travel.get(mode, {}).get("distance_m", 0.0),
-                "duration_s": travel.get(mode, {}).get("duration_s", 0.0),
+                "distance_m": travel[mode]["distance_m"],
+                "duration_s": travel[mode]["duration_s"],
                 "trend": travel_trend[mode],
             }
             for mode in modes_with_data
         },
         "visits": {
-            category: {"duration_s": visits.get(category, 0.0), "trend": visit_trend[category]}
-            for category in sorted(
-                set(visits) | {c for c, t in visit_trend.items() if sum(t) > 0},
-                key=lambda c: VISIT_CATEGORIES.index(c) if c in VISIT_CATEGORIES else len(VISIT_CATEGORIES),
-            )
+            category: {"duration_s": visits[category], "trend": visit_trend[category]}
+            for category in categories_with_data
         },
     }

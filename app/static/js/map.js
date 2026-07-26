@@ -1,6 +1,10 @@
 // Leaflet helpers shared by the Day and Trips views. Kept theme-agnostic -
 // popup/route colours come from the --wp-* CSS custom properties via
 // components.css and the theme files, not from anything hardcoded here.
+// CATEGORY_ICONS is defined in app.js - safe to reference here because these
+// functions only ever run later, at user-interaction time, by which point
+// app.js has already loaded (script tags execute top-to-bottom, but a
+// function's body only runs when called).
 
 const WP_BASE_LAYERS = {
   Streets: () => L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -25,6 +29,48 @@ const OSRM_PROFILES = { driving: 'driving', taxi: 'driving', bus: 'driving', wal
 
 function wpModeColor(mode) {
   return getComputedStyle(document.documentElement).getPropertyValue(`--wp-mode-${mode}`).trim() || '#94a3b8';
+}
+
+function wpCategoryEmoji(category) {
+  if (typeof CATEGORY_ICONS !== 'undefined' && CATEGORY_ICONS[category]) return CATEGORY_ICONS[category];
+  return '\u{1F4CD}';
+}
+
+function wpCategoryDivIcon(category) {
+  return L.divIcon({
+    className: 'wp-map-marker',
+    html: `<div class="wp-map-marker-badge">${wpCategoryEmoji(category)}</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -13],
+  });
+}
+
+// A plain coloured line reads fine on a contrasting basemap but disappears
+// against roads/backgrounds close to it in hue (e.g. Voyage's driving-mode
+// brown against its own parchment map tiles and accent colour) - a wider
+// white casing underneath, standard road-map cartography, guarantees
+// contrast regardless of the line colour or the theme/tile underneath.
+function wpCasedPolyline(latlngs, color, opts = {}) {
+  const group = L.layerGroup();
+  L.polyline(latlngs, { color: '#ffffff', weight: (opts.weight || 3) + 4, opacity: 0.9, dashArray: opts.dashArray }).addTo(group);
+  L.polyline(latlngs, { color, weight: opts.weight || 3, opacity: opts.opacity ?? 0.95, dashArray: opts.dashArray }).addTo(group);
+  return group;
+}
+
+// Every marker/line/group this module adds is tracked here per-map so a
+// re-render can clear exactly those, regardless of layer type (Marker,
+// Polyline, LayerGroup) - simpler and less fragile than instanceof-filtering
+// map.eachLayer(), which breaks every time a new layer type gets added and
+// must also never touch the base tile layer or the layer-switcher control.
+function wpClearLayers(map) {
+  (map._wpLayers || []).forEach((l) => map.removeLayer(l));
+  map._wpLayers = [];
+}
+function wpAddLayer(map, layer) {
+  layer.addTo(map);
+  (map._wpLayers ||= []).push(layer);
+  return layer;
 }
 
 function wpInitMap(containerId) {
@@ -65,20 +111,21 @@ async function wpRenderDayMap(map, points, timeline) {
   // drawn onto the new one.
   const renderToken = ++_wpDayMapRenderToken;
 
-  map.eachLayer((l) => { if (l instanceof L.Polyline || l instanceof L.CircleMarker) map.removeLayer(l); });
+  wpClearLayers(map);
 
   const bounds = [];
 
   if (points.length) {
     const latlngs = points.map((p) => [p.lat, p.lon]);
-    L.polyline(latlngs, { color: '#3b82f6', weight: 3, opacity: 0.7 }).addTo(map);
+    wpAddLayer(map, wpCasedPolyline(latlngs, '#3b82f6', { opacity: 0.75 }));
     bounds.push(...latlngs);
   }
 
   const visits = timeline.filter((e) => e.type === 'visit');
   visits.forEach((v) => {
-    const marker = L.circleMarker([v.lat, v.lon], { radius: 7, color: '#10b981', fillColor: '#10b981', fillOpacity: 0.9, weight: 2 }).addTo(map);
+    const marker = L.marker([v.lat, v.lon], { icon: wpCategoryDivIcon(v.category) });
     marker.bindPopup(`<b>${v.place_name || 'Unnamed place'}</b><br>${v.city || ''}`);
+    wpAddLayer(map, marker);
     bounds.push([v.lat, v.lon]);
   });
 
@@ -95,13 +142,14 @@ async function wpRenderDayMap(map, points, timeline) {
 
     const color = wpModeColor(entry.mode);
     const straight = [[prevVisit.lat, prevVisit.lon], [nextVisit.lat, nextVisit.lon]];
-    const line = L.polyline(straight, { color, weight: 3, opacity: 0.6, dashArray: '6 6' }).addTo(map);
+    const line = wpAddLayer(map, wpCasedPolyline(straight, color, { opacity: 0.7, dashArray: '6 6' }));
 
     const routed = await wpFetchRoute(entry.mode, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon);
     if (renderToken !== _wpDayMapRenderToken) return; // superseded by a newer render
     if (routed) {
       map.removeLayer(line);
-      L.polyline(routed, { color, weight: 3, opacity: 0.8 }).addTo(map);
+      map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
+      wpAddLayer(map, wpCasedPolyline(routed, color));
     }
   }
 
@@ -110,13 +158,14 @@ async function wpRenderDayMap(map, points, timeline) {
 }
 
 function wpRenderPins(map, pins) {
-  map.eachLayer((l) => { if (l instanceof L.CircleMarker) map.removeLayer(l); });
+  wpClearLayers(map);
   const latlngs = [];
   pins.forEach((p) => {
     if (p.lat == null || p.lon == null) return;
     latlngs.push([p.lat, p.lon]);
-    const marker = L.circleMarker([p.lat, p.lon], { radius: 6, color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.9, weight: 2 }).addTo(map);
+    const marker = L.marker([p.lat, p.lon], { icon: wpCategoryDivIcon(p.category) });
     if (p.label) marker.bindPopup(p.label);
+    wpAddLayer(map, marker);
   });
   if (latlngs.length) map.fitBounds(latlngs, { padding: [24, 24] });
   else map.setView([51.5, -0.1], 6);

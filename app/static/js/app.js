@@ -92,7 +92,7 @@ function waypoint() {
     themeMenuOpen: false,
     tab: 'day',
 
-    day: { date: todayIso(), data: null, loading: false, map: null },
+    day: { date: todayIso(), data: null, loading: false, map: null, overview: null },
     trips: { data: null, loading: false, map: null, detail: null, detailLoading: false, detailMap: null },
     insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false },
     places: { data: null, loading: false, category: null, categoryData: null },
@@ -128,6 +128,7 @@ function waypoint() {
     init() {
       this.applyTheme(this.theme);
       this.loadDay();
+      this.loadDayOverview();
     },
 
     setTheme(t) {
@@ -172,6 +173,35 @@ function waypoint() {
       this.day.date = d.toISOString().slice(0, 10);
       this.loadDay();
     },
+    goToDate(dateStr) {
+      if (!dateStr) return;
+      this.day.date = dateStr;
+      this.loadDay();
+    },
+    async loadDayOverview() {
+      try {
+        const res = await fetch('/api/day/overview');
+        this.day.overview = await res.json();
+      } catch (e) { console.error('Failed to load day overview', e); }
+    },
+    goToYear(year) {
+      const y = this.day.overview.years.find((entry) => entry.year === year);
+      if (!y) return;
+      // Jump to the first day WITH data that year, not always 1 January -
+      // history from an import can start mid-year (e.g. the KML import's
+      // earliest years only cover a couple of trips, not January).
+      this.day.date = new Date(y.min_ts * 1000).toISOString().slice(0, 10);
+      this.loadDay();
+    },
+    yearBarHeights() {
+      if (!this.day.overview) return [];
+      const max = Math.max(1, ...this.day.overview.years.map((y) => y.visit_count));
+      return this.day.overview.years.map((y) => ({
+        year: y.year,
+        height: Math.max(4, Math.round((y.visit_count / max) * 32)),
+        active: new Date(this.day.date).getFullYear() === y.year,
+      }));
+    },
     renderDayMap() {
       if (!this.day.map) this.day.map = wpInitMap('map-container');
       wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline);
@@ -202,7 +232,7 @@ function waypoint() {
     renderTripsMap() {
       if (!this.trips.map) this.trips.map = wpInitMap('trips-map-container');
       const pins = this.trips.data.trips.flatMap((t) =>
-        t.visits.map((v) => ({ lat: v.lat, lon: v.lon, label: `<b>${v.place_name || t.primary_city || 'Visit'}</b>` }))
+        t.visits.map((v) => ({ lat: v.lat, lon: v.lon, category: v.category, label: `<b>${v.place_name || t.primary_city || 'Visit'}</b>` }))
       );
       wpRenderPins(this.trips.map, pins);
     },

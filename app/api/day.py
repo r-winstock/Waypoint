@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import Integer, func
 from sqlalchemy.orm import Session
 
 from app.db import db_dependency
@@ -20,6 +21,28 @@ def _day_bounds(day_str: str) -> tuple[int, int]:
     start = datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
     end = start + timedelta(days=1)
     return int(start.timestamp()), int(end.timestamp())
+
+
+@router.get("/api/day/overview")
+def get_day_overview(session: Session = Depends(db_dependency)):
+    """Per-year visit counts across all recorded history, for the Day view's
+    year-strip navigator - clicking through one day at a time to reach an
+    old date is painful with 11+ years of history. min_ts/max_ts let the
+    frontend jump to a real date with data in that year rather than always
+    landing on 1 January, which may have none."""
+    year_expr = func.cast(func.strftime("%Y", Visit.start_ts, "unixepoch"), Integer)
+    rows = (
+        session.query(year_expr.label("year"), func.count(Visit.id), func.min(Visit.start_ts), func.max(Visit.start_ts))
+        .group_by("year")
+        .order_by("year")
+        .all()
+    )
+    return {
+        "years": [
+            {"year": year, "visit_count": count, "min_ts": min_ts, "max_ts": max_ts}
+            for year, count, min_ts, max_ts in rows
+        ]
+    }
 
 
 @router.get("/api/day/{day_str}")

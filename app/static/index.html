@@ -63,11 +63,22 @@
 
     <!-- ═══════════ DAY ═══════════ -->
     <div x-show="tab==='day'">
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between mb-2 gap-3">
         <button class="btn-icon" @click="changeDay(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-        <div class="text-lg font-semibold display" x-text="new Date(day.date).toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})"></div>
+        <div class="flex items-center gap-3">
+          <div class="text-lg font-semibold display" x-text="new Date(day.date).toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})"></div>
+          <input type="date" class="field-input" style="padding: 4px 8px; width: auto" :value="day.date" @change="goToDate($event.target.value)">
+        </div>
         <button class="btn-icon" @click="changeDay(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
       </div>
+
+      <template x-if="day.overview && day.overview.years.length > 1">
+        <div class="flex items-end gap-1 mb-4" style="height: 36px; overflow-x: auto">
+          <template x-for="y in yearBarHeights()" :key="y.year">
+            <div class="year-bar" :class="y.active && 'active'" :style="`height:${y.height}px`" :title="y.year" @click="goToYear(y.year)"></div>
+          </template>
+        </div>
+      </template>
 
       <template x-if="day.data">
         <div>

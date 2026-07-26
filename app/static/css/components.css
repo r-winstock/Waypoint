@@ -228,6 +228,20 @@ h1, h2, h3, .display {
   vertical-align: bottom;
 }
 
+/* Day view's year-activity strip - a compact bar per year across all
+   recorded history, clickable to jump straight there instead of paging
+   through one day at a time. */
+.year-bar {
+  width: 8px;
+  min-width: 8px;
+  background: var(--wp-accent-soft, var(--wp-accent));
+  border-radius: 2px 2px 0 0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.year-bar:hover { background: var(--wp-accent-light); }
+.year-bar.active { background: var(--wp-accent); }
+
 /* ─── Grid cards (Places / Cities / World) ─── */
 .grid-cards {
   display: grid;
@@ -300,3 +314,14 @@ h1, h2, h3, .display {
 .leaflet-popup-content { font-family: var(--wp-font-body); font-size: 13px; }
 .leaflet-popup-content b { font-family: var(--wp-font-display); font-weight: 400; color: var(--wp-map-popup-accent); }
 .leaflet-popup-tip { background: var(--wp-map-popup-bg); }
+
+/* Category-icon map markers, replacing plain coloured dots - visually
+   consistent with the Day timeline's own category badges. */
+.wp-map-marker { background: none; border: none; }
+.wp-map-marker-badge {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--wp-surface-1); border: 2px solid var(--wp-accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  font-size: 14px; line-height: 1;
+}

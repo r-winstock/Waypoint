@@ -32,6 +32,7 @@ def get_trips(session: Session = Depends(db_dependency)):
                         "lat": v.lat,
                         "lon": v.lon,
                         "place_name": v.place.name if v.place else None,
+                        "category": v.place.category if v.place else None,
                         "city": v.place.city if v.place else None,
                     }
                     for v in t.visits
