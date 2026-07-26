@@ -263,8 +263,12 @@ h1, h2, h3, .display {
   transition: all 0.2s ease;
 }
 .grid-card:hover { border-color: var(--wp-accent-border); background: var(--wp-surface-1-hover); transform: translateY(-1px); }
-.grid-card .count-badge {
-  position: absolute; top: 12px; right: 14px;
+/* Not scoped to .grid-card - .trip-card's "N visits" badge needs the same
+   background/padding treatment (it was plain unstyled text floating
+   directly on the photo before this, unreadable against a light patch of
+   sky or stonework with no scrim behind it there). */
+.count-badge {
+  position: absolute; top: 12px; right: 14px; z-index: 2;
   font-size: 11px; font-weight: 600;
   background: var(--wp-surface-3); color: var(--wp-fg-muted);
   padding: 3px 9px; border-radius: var(--wp-radius-pill);
@@ -282,15 +286,40 @@ h1, h2, h3, .display {
   background: linear-gradient(to top, rgba(10, 10, 10, 0.8), rgba(10, 10, 10, 0.15) 65%, transparent);
 }
 .grid-card--photo .card-photo-content { position: relative; z-index: 2; padding: 16px; width: 100%; }
-.grid-card--photo .card-photo-content .title { color: #fff; }
-.grid-card--photo .card-photo-content .subtitle { color: rgba(255, 255, 255, 0.85); }
+/* White text only when a photo actually loaded (.has-photo, toggled by
+   imgFailed in the template) - the class .grid-card--photo alone doesn't
+   mean a photo is showing, and forcing white unconditionally left plain
+   white-on-cream, unreadable text whenever the photo failed (confirmed:
+   "Milton Keynes" - a 429 from Wikimedia mid-download, not even a missing
+   photo, see the image-fetch rate-limit fix). */
+.grid-card--photo.has-photo .card-photo-content .title { color: #fff; }
+.grid-card--photo.has-photo .card-photo-content .subtitle { color: rgba(255, 255, 255, 0.85); }
 .grid-card--photo .count-badge { z-index: 2; }
+
+/* World cards - a subtler treatment than the full-bleed photo above: the
+   flag sits at one edge and fades into the card's own plain background.
+   The SVG turbulence/displacement filter (wp-flag-wave, still defined near
+   the top of index.html) read as a jagged/torn edge rather than a smooth
+   wave once actually rendered, and the flag stayed opaque enough to make
+   the dark title text unreadable against a bold flag colour underneath it
+   (both confirmed live) - dropped the filter entirely and dimmed the flag
+   itself (opacity) so normal card text stays legible wherever it lands,
+   rather than depending on the fade mask alone to clear the text area. */
+.grid-card--flag { position: relative; overflow: hidden; min-height: 140px; display: flex; align-items: flex-end; }
+.grid-card--flag .card-flag-img {
+  position: absolute; left: 0; top: 0; height: 100%; width: 70%;
+  object-fit: cover; z-index: 0; opacity: 0.3;
+  mask-image: linear-gradient(to right, black 40%, transparent 90%);
+  -webkit-mask-image: linear-gradient(to right, black 40%, transparent 90%);
+}
+.grid-card--flag .card-flag-content { position: relative; z-index: 1; padding: 16px; width: 100%; }
+
 .card-photo-refresh {
   position: absolute; top: 12px; left: 14px; z-index: 2;
   width: 26px; height: 26px; opacity: 0; transition: opacity 0.15s;
   background: rgba(0, 0, 0, 0.4); border-color: rgba(255, 255, 255, 0.3); color: #fff;
 }
-.grid-card--photo:hover .card-photo-refresh { opacity: 1; }
+.grid-card--photo:hover .card-photo-refresh, .trip-card:hover .card-photo-refresh { opacity: 1; }
 
 /* ─── Day timeline ─── */
 .day-row {
@@ -340,7 +369,8 @@ h1, h2, h3, .display {
 /* Leaflet needs an explicit height on its container or it collapses to 0 and
    never renders - only #map-container (Day view) ever had one; the Trips
    overview map and the Trip detail map shared no rule at all. */
-#map-container, #trips-map-container, #trip-detail-map-container, #world-map-container {
+#map-container, #trips-map-container, #trip-detail-map-container, #world-map-container,
+#country-detail-map-container, #city-detail-map-container {
   height: 320px; border-radius: var(--wp-radius-card); border: 1px solid var(--wp-border); overflow: hidden;
 }
 .leaflet-popup-content-wrapper { background: var(--wp-map-popup-bg); color: var(--wp-map-popup-fg); border-radius: 8px; }
@@ -352,9 +382,9 @@ h1, h2, h3, .display {
    consistent with the Day timeline's own category badges. */
 .wp-map-marker { background: none; border: none; }
 .wp-map-marker-badge {
-  width: 28px; height: 28px; border-radius: 50%;
+  width: 18px; height: 18px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: var(--wp-surface-1); border: 2px solid var(--wp-accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  font-size: 14px; line-height: 1;
+  background: var(--wp-surface-1); border: 1.5px solid var(--wp-accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  font-size: 10px; line-height: 1;
 }

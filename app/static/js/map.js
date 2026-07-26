@@ -6,20 +6,31 @@
 // app.js has already loaded (script tags execute top-to-bottom, but a
 // function's body only runs when called).
 
+// noWrap stops the tile layer repeating the world horizontally when zoomed
+// out far enough to see it all at once (a wide, short map container - the
+// Trips overview and World choropleth both fit-bounds to widely scattered
+// points/the whole world - hits this easily) - confirmed live: two Africas,
+// two South Americas side by side. Paired with maxBounds on the map itself
+// in wpInitMap so panning can't scroll into the (now blank) repeated area
+// either.
 const WP_BASE_LAYERS = {
   Streets: () => L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
+    noWrap: true,
   }),
   Satellite: () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: 'Tiles &copy; Esri',
     maxZoom: 19,
+    noWrap: true,
   }),
   Terrain: () => L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap',
     maxZoom: 17,
+    noWrap: true,
   }),
 };
+
 
 // Road-network profiles the public OSRM demo router can snap a route to -
 // only for modes that actually travel on a road network it knows about.
@@ -40,9 +51,9 @@ function wpCategoryDivIcon(category) {
   return L.divIcon({
     className: 'wp-map-marker',
     html: `<div class="wp-map-marker-badge">${wpCategoryEmoji(category)}</div>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-    popupAnchor: [0, -13],
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+    popupAnchor: [0, -9],
   });
 }
 
@@ -74,7 +85,14 @@ function wpAddLayer(map, layer) {
 }
 
 function wpInitMap(containerId) {
-  const map = L.map(containerId, { scrollWheelZoom: false });
+  // maxBounds was tried alongside noWrap to fix the repeated-world tiles,
+  // but it fought panning/zooming near the antimeridian hard enough that
+  // New Zealand (~175°E) became unreachable, confirmed live. noWrap on the
+  // tile layers is what actually stops the repeat (blank space beyond the
+  // real map instead of duplicate tiles) - maxBounds was only ever a nice-
+  // to-have on top of that, not required, so dropped rather than keep
+  // tuning it against this edge case.
+  const map = L.map(containerId, { scrollWheelZoom: false, minZoom: 2 });
   const layers = Object.fromEntries(Object.entries(WP_BASE_LAYERS).map(([name, make]) => [name, make()]));
   layers.Streets.addTo(map);
   L.control.layers(layers).addTo(map);

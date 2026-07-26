@@ -31,6 +31,21 @@ def get_nearby_alternatives(place_id: int, session: Session = Depends(db_depende
     return {"alternatives": find_nearby_places(place.lat_round, place.lon_round)}
 
 
+@router.get("/api/places/detail/{place_id}/visits")
+def get_place_visits(place_id: int, session: Session = Depends(db_dependency)):
+    place = session.get(Place, place_id)
+    if place is None:
+        raise HTTPException(status_code=404, detail="Place not found")
+    visits = session.query(Visit).filter(Visit.place_id == place_id).order_by(Visit.start_ts.desc()).all()
+    return {
+        "place_id": place_id,
+        "name": place.name,
+        "city": place.city,
+        "category": place.category,
+        "visits": [{"id": v.id, "start_ts": v.start_ts, "end_ts": v.end_ts} for v in visits],
+    }
+
+
 @router.get("/api/places/detail/{place_id}/similar")
 def get_similar_places(place_id: int, session: Session = Depends(db_dependency)):
     """Other Place rows that look like the same real place as this one

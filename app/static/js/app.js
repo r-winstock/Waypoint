@@ -101,7 +101,7 @@ function waypoint() {
     trips: { data: null, loading: false, page: 1, map: null, detail: null, detailLoading: false, detailMap: null },
     insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false },
     places: { data: null, loading: false, category: null, categoryData: null },
-    cities: { data: null, loading: false },
+    cities: { data: null, loading: false, detail: null, detailLoading: false, detailMap: null },
     world: { data: null, loading: false, map: null, detail: null, detailLoading: false, detailMap: null },
 
     placeEdit: {
@@ -189,6 +189,7 @@ function waypoint() {
         if (tab === 'trips' && this.trips.detailMap) this.trips.detailMap.invalidateSize();
         if (tab === 'world' && this.world.map) this.world.map.invalidateSize();
         if (tab === 'world' && this.world.detailMap) this.world.detailMap.invalidateSize();
+        if (tab === 'cities' && this.cities.detailMap) this.cities.detailMap.invalidateSize();
       });
     },
 
@@ -340,6 +341,19 @@ function waypoint() {
       this.places.categoryData = await res.json();
     },
     closeCategory() { this.places.category = null; this.places.categoryData = null; },
+    placeVisits: {},
+    async togglePlaceVisits(placeId) {
+      if (this.placeVisits[placeId]) {
+        delete this.placeVisits[placeId];
+        return;
+      }
+      this.placeVisits[placeId] = { loading: true, visits: [] };
+      try {
+        const res = await fetch(`/api/places/detail/${placeId}/visits`);
+        const data = await res.json();
+        this.placeVisits[placeId] = { loading: false, visits: data.visits };
+      } catch (e) { console.error('Failed to load place visits', e); delete this.placeVisits[placeId]; }
+    },
 
     // ─── Cities ───
     async loadCities() {
@@ -349,6 +363,26 @@ function waypoint() {
         this.cities.data = await res.json();
       } catch (e) { console.error('Failed to load cities', e); }
       finally { this.cities.loading = false; }
+    },
+    async openCity(cityName) {
+      if (!cityName) return;
+      this.cities.detail = null;
+      this.cities.detailLoading = true;
+      try {
+        const res = await fetch(`/api/cities/${encodeURIComponent(cityName)}`);
+        this.cities.detail = await res.json();
+        this.$nextTick(() => this.renderCityMap());
+      } catch (e) { console.error('Failed to load city detail', e); }
+      finally { this.cities.detailLoading = false; }
+    },
+    closeCity() { this.cities.detail = null; },
+    renderCityMap() {
+      if (!this.cities.detailMap) this.cities.detailMap = wpInitMap('city-detail-map-container');
+      const pins = this.cities.detail.places.map((p) => ({
+        lat: p.lat, lon: p.lon, category: p.category,
+        label: `<b>${p.name || 'Unnamed place'}</b>`,
+      }));
+      wpRenderPins(this.cities.detailMap, pins);
     },
 
     // ─── World ───

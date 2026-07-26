@@ -25,6 +25,22 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 _STOPWORDS = {"the", "and", "of", "in", "at", "on", "for", "de", "la", "le", "el", "an", "a"}
 
+# A category drilldown can render dozens of cards at once, each triggering a
+# search + summary + image download - confirmed live that this got rowan
+# rate-limited (HTTP 429) by Wikimedia Commons on the download step with no
+# throttling at all. Same self-throttle pattern geocoding.py already uses
+# for Nominatim, applied here across all three Wikipedia/Wikimedia calls.
+MIN_INTERVAL_S = 0.4
+_last_call = 0.0
+
+
+def _throttle() -> None:
+    global _last_call
+    wait = MIN_INTERVAL_S - (time.monotonic() - _last_call)
+    if wait > 0:
+        time.sleep(wait)
+    _last_call = time.monotonic()
+
 
 def _slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "unknown"
@@ -50,6 +66,7 @@ def _plausible_match(query: str, title: str) -> bool:
 
 
 def _wikipedia_search_title(query: str) -> str | None:
+    _throttle()
     try:
         resp = httpx.get(
             WIKIPEDIA_SEARCH_URL,
@@ -77,6 +94,7 @@ def _wikipedia_lead_image(title: str, require_coordinates: bool = False) -> str 
     coordinates in its infobox; requiring them here rejects that whole
     class of wrong match without needing to guess which words are "really"
     place names."""
+    _throttle()
     try:
         resp = httpx.get(
             WIKIPEDIA_SUMMARY_URL.format(title=quote(title)),
@@ -94,6 +112,7 @@ def _wikipedia_lead_image(title: str, require_coordinates: bool = False) -> str 
 
 
 def _download_image(url: str, key: str) -> str | None:
+    _throttle()
     try:
         resp = httpx.get(url, headers={"User-Agent": USER_AGENT}, timeout=15.0, follow_redirects=True)
         resp.raise_for_status()
@@ -121,6 +140,18 @@ def get_or_fetch_image(session: Session, query: str, force: bool = False, geo: b
     title = _wikipedia_search_title(query)
     image_url = _wikipedia_lead_image(title, require_coordinates=geo) if title else None
     local_path = _download_image(image_url, key) if image_url else None
+
+    if image_url and not local_path:
+        # The search found a real image (image_url is a genuine Wikimedia
+        # URL) but downloading it failed - confirmed live this was Wikimedia
+        # rate-limiting (HTTP 429) under load, not a broken link. Caching
+        # this as a permanent "not found" would poison it until a manual
+        # refresh even though the photo genuinely exists - instead, return
+        # an unsaved result so the next request retries the fetch from
+        # scratch rather than trusting a transient failure forever.
+        if cached is not None:
+            return cached
+        return CachedImage(key=key, query=query, source_url=image_url, found=False, fetched_at=int(time.time()))
 
     if cached is None:
         cached = CachedImage(key=key, query=query)

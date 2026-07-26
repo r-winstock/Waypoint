@@ -32,6 +32,18 @@
 </head>
 
 <body class="antialiased">
+<!-- Reusable SVG filter for the World cards' "waving flag" effect - a flat
+     flagcdn.com image run through a gentle turbulence/displacement map to
+     read as cloth rather than a stiff rectangle, referenced via CSS
+     filter:url(#wp-flag-wave). No pre-rendered 3D flag asset exists as a
+     free/keyless source (that's normally a paid stock-illustration style),
+     so this approximates it entirely client-side from the same flat image. -->
+<svg width="0" height="0" style="position: absolute">
+  <filter id="wp-flag-wave" x="-20%" y="-20%" width="140%" height="140%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.01 0.06" numOctaves="2" seed="7" result="wp-flag-noise"></feTurbulence>
+    <feDisplacementMap in="SourceGraphic" in2="wp-flag-noise" scale="14" xChannelSelector="R" yChannelSelector="G"></feDisplacementMap>
+  </filter>
+</svg>
 <div x-data="waypoint()" x-init="init()">
 
   <header class="top-bar">
@@ -189,7 +201,7 @@
                       <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true); imgFailed = false" title="Refresh photo">
                         <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                       </button>
-                      <span class="count-badge" x-show="d.trip_count > 1" x-text="d.trip_count + ' visits'" style="position: absolute; top: 12px; left: 14px"></span>
+                      <span class="count-badge" x-show="d.trip_count > 1" x-text="d.trip_count + ' visits'"></span>
                       <div class="title" x-text="d.primary_city || d.primary_country || 'Trip'"></div>
                     </div>
                     <div class="body">
@@ -358,20 +370,28 @@
           <h2 class="text-lg font-semibold mb-3 display" x-text="places.category"></h2>
           <div class="grid-cards">
             <template x-for="p in (places.categoryData ? places.categoryData.places : [])" :key="p.id">
-              <div class="grid-card grid-card--photo" x-data="{imgFailed: false}" style="cursor: default">
+              <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: pointer" @click="togglePlaceVisits(p.id)">
                 <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(p.name || p.city, p.city)" @error="imgFailed = true">
                 <div x-show="!imgFailed" class="card-photo-scrim"></div>
                 <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(p.name || p.city); imgFailed = false" title="Refresh photo">
                   <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                 </button>
                 <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; z-index: 2" title="This place is wrong? Fix it"
-                        @click="openPlaceEdit(p.id, p.name, places.category, p.city, null, null)">
+                        @click.stop="openPlaceEdit(p.id, p.name, places.category, p.city, null, null)">
                   <i data-lucide="pencil" class="w-3 h-3"></i>
                 </button>
                 <div class="card-photo-content">
                   <div class="title" x-text="p.name || 'Unnamed place'"></div>
                   <div class="subtitle" x-text="p.city || ''"></div>
                   <div class="text-xs mt-2" :style="imgFailed ? 'color: var(--wp-fg-dim)' : 'color: rgba(255,255,255,0.85)'" x-text="p.visit_count + ' visit' + (p.visit_count > 1 ? 's' : '') + ' · last ' + formatRelative(p.last_visit_ts)"></div>
+                  <template x-if="placeVisits[p.id]">
+                    <div class="mt-2 pt-2" style="border-top: 1px solid rgba(255,255,255,0.3); max-height: 160px; overflow-y: auto">
+                      <div x-show="placeVisits[p.id].loading" class="text-xs" :style="imgFailed ? '' : 'color: rgba(255,255,255,0.85)'">Loading visits…</div>
+                      <template x-for="v in (placeVisits[p.id].visits || [])" :key="v.id">
+                        <div class="text-xs py-0.5" :style="imgFailed ? '' : 'color: rgba(255,255,255,0.85)'" x-text="formatDateRange(v.start_ts, v.end_ts) + ' · ' + formatTime(v.start_ts) + '–' + formatTime(v.end_ts)"></div>
+                      </template>
+                    </div>
+                  </template>
                 </div>
               </div>
             </template>
@@ -382,25 +402,57 @@
 
     <!-- ═══════════ CITIES ═══════════ -->
     <div x-show="tab==='cities'">
-      <template x-if="cities.data && !cities.data.cities.length">
-        <div class="empty-state">No cities visited yet.</div>
-      </template>
-      <div class="grid-cards">
-        <template x-for="c in (cities.data ? cities.data.cities : [])" :key="c.name">
-          <div class="grid-card grid-card--photo" x-data="{imgFailed: false}" style="cursor: default">
-            <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true)" @error="imgFailed = true">
-            <div x-show="!imgFailed" class="card-photo-scrim"></div>
-            <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(c.name, true); imgFailed = false" title="Refresh photo">
-              <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-            </button>
-            <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
-            <div class="card-photo-content">
-              <div class="title" x-text="c.name"></div>
-              <div class="subtitle" :style="imgFailed ? '' : 'color: rgba(255,255,255,0.85)'" x-text="formatRelative(c.last_visit_ts)"></div>
-            </div>
+      <template x-if="!cities.detail && !cities.detailLoading">
+        <div>
+          <template x-if="cities.data && !cities.data.cities.length">
+            <div class="empty-state">No cities visited yet.</div>
+          </template>
+          <div class="grid-cards">
+            <template x-for="c in (cities.data ? cities.data.cities : [])" :key="c.name">
+              <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" @click="openCity(c.name)">
+                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true)" @error="imgFailed = true">
+                <div x-show="!imgFailed" class="card-photo-scrim"></div>
+                <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(c.name, true); imgFailed = false" title="Refresh photo">
+                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                </button>
+                <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
+                <div class="card-photo-content">
+                  <div class="title" x-text="c.name"></div>
+                  <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+                </div>
+              </div>
+            </template>
           </div>
-        </template>
-      </div>
+        </div>
+      </template>
+
+      <template x-if="cities.detailLoading">
+        <div class="empty-state">Loading city…</div>
+      </template>
+
+      <template x-if="cities.detail">
+        <div>
+          <button class="nav-tab mb-3" @click="closeCity()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to cities</button>
+          <div class="text-lg font-semibold display mb-1" x-text="cities.detail.city_name"></div>
+          <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="cities.detail.places.length + ' place' + (cities.detail.places.length === 1 ? '' : 's')"></div>
+
+          <div id="city-detail-map-container" class="mb-5"></div>
+
+          <div class="grid-cards">
+            <template x-for="p in cities.detail.places" :key="p.id">
+              <div class="grid-card" style="cursor: default">
+                <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px" title="This place is wrong? Fix it"
+                        @click="openPlaceEdit(p.id, p.name, p.category, cities.detail.city_name, null, null)">
+                  <i data-lucide="pencil" class="w-3 h-3"></i>
+                </button>
+                <div class="text-2xl" x-text="categoryIcon(p.category)"></div>
+                <div class="title" x-text="p.name || 'Unnamed place'"></div>
+                <div class="text-xs mt-2" style="color: var(--wp-fg-dim)" x-text="p.visit_count + ' visit' + (p.visit_count > 1 ? 's' : '') + ' · last ' + formatRelative(p.last_visit_ts)"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- ═══════════ WORLD ═══════════ -->
@@ -413,13 +465,12 @@
           </template>
           <div class="grid-cards">
             <template x-for="c in (world.data ? world.data.countries : [])" :key="c.name">
-              <div class="grid-card grid-card--photo" x-data="{imgFailed: false}" @click="openCountry(c.country_code)">
-                <img x-show="!imgFailed && c.country_code" class="card-photo-img" style="object-fit: contain; background: var(--wp-surface-2)" :src="flagImageUrl(c.country_code)" @error="imgFailed = true">
-                <div x-show="!imgFailed && c.country_code" class="card-photo-scrim"></div>
+              <div class="grid-card grid-card--flag" x-data="{imgFailed: false}" @click="openCountry(c.country_code)">
+                <img x-show="!imgFailed && c.country_code" class="card-flag-img" :src="flagImageUrl(c.country_code)" @error="imgFailed = true">
                 <span class="count-badge" x-text="c.city_count + ' cit' + (c.city_count === 1 ? 'y' : 'ies')"></span>
-                <div class="card-photo-content">
+                <div class="card-flag-content">
                   <div class="title" x-text="c.name"></div>
-                  <div class="subtitle" :style="(!imgFailed && c.country_code) ? 'color: rgba(255,255,255,0.85)' : ''" x-text="formatRelative(c.last_visit_ts)"></div>
+                  <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
                 </div>
               </div>
             </template>

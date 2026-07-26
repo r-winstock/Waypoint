@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -29,4 +29,42 @@ def get_cities(session: Session = Depends(db_dependency)):
             {"name": city, "place_count": place_count, "last_visit_ts": last_ts}
             for city, place_count, last_ts in rows
         ]
+    }
+
+
+@router.get("/api/cities/{city_name}")
+def get_city_detail(city_name: str, session: Session = Depends(db_dependency)):
+    rows = (
+        session.query(
+            Place.id,
+            Place.name,
+            Place.category,
+            Place.lat_round,
+            Place.lon_round,
+            func.count(Visit.id),
+            func.max(Visit.end_ts),
+        )
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.city == city_name)
+        .group_by(Place.id)
+        .order_by(func.max(Visit.end_ts).desc())
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No places found for this city")
+
+    return {
+        "city_name": city_name,
+        "places": [
+            {
+                "id": place_id,
+                "name": name,
+                "category": category,
+                "lat": lat,
+                "lon": lon,
+                "visit_count": visit_count,
+                "last_visit_ts": last_ts,
+            }
+            for place_id, name, category, lat, lon, visit_count, last_ts in rows
+        ],
     }
