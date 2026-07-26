@@ -234,13 +234,17 @@ h1, h2, h3, .display {
 .year-bar {
   width: 8px;
   min-width: 8px;
-  background: var(--wp-accent-soft, var(--wp-accent));
+  /* A neutral, more muted tone for "has data" rather than another shade of
+     the warm accent family - too close to the accent/background hues to
+     tell bars apart from each other or from the page at a glance. */
+  background: var(--wp-fg-dim);
+  opacity: 0.55;
   border-radius: 2px 2px 0 0;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, opacity 0.15s;
 }
-.year-bar:hover { background: var(--wp-accent-light); }
-.year-bar.active { background: var(--wp-accent); }
+.year-bar:hover { background: var(--wp-accent-light); opacity: 1; }
+.year-bar.active { background: var(--wp-accent); opacity: 1; }
 
 /* ─── Grid cards (Places / Cities / World) ─── */
 .grid-cards {

@@ -114,14 +114,24 @@ async function wpRenderDayMap(map, points, timeline) {
   wpClearLayers(map);
 
   const bounds = [];
+  const visits = timeline.filter((e) => e.type === 'visit');
+  const segments = timeline.filter((e) => e.type === 'segment');
 
-  if (points.length) {
-    const latlngs = points.map((p) => [p.lat, p.lon]);
+  // Raw GPS points are only ever connected into a line for the time range
+  // of an actual TripSegment (real recorded movement) - never across a
+  // visit's own dwell period. Normal GPS drift while genuinely stationary
+  // otherwise draws what looks exactly like a real journey on the map, even
+  // on a day with a single visit and zero segments - confirmed live, and
+  // actively misleading since it doesn't correspond to anything in the
+  // visit/segment list below it.
+  for (const seg of segments) {
+    const legPoints = points.filter((p) => p.tst >= seg.start_ts && p.tst <= seg.end_ts);
+    if (legPoints.length < 2) continue;
+    const latlngs = legPoints.map((p) => [p.lat, p.lon]);
     wpAddLayer(map, wpCasedPolyline(latlngs, '#3b82f6', { opacity: 0.75 }));
     bounds.push(...latlngs);
   }
 
-  const visits = timeline.filter((e) => e.type === 'visit');
   visits.forEach((v) => {
     const marker = L.marker([v.lat, v.lon], { icon: wpCategoryDivIcon(v.category) });
     marker.bindPopup(`<b>${v.place_name || 'Unnamed place'}</b><br>${v.city || ''}`);

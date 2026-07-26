@@ -10,23 +10,49 @@ router = APIRouter()
 
 
 @router.get("/api/trips")
-def get_trips(session: Session = Depends(db_dependency)):
+def get_trips(page: int = 1, page_size: int = 24, session: Session = Depends(db_dependency)):
+    """Grouped by destination (primary_city + primary_country), not one card
+    per Trip row - 800 individual trips on one page was unusable, and a
+    handful of destinations (e.g. Reading, visited on three separate
+    unrelated occasions) were showing as several near-identical cards next
+    to each other. Each group carries its own individual trips (still
+    openable via GET /api/trips/{id} same as before) for the frontend to
+    expand inline rather than needing a second endpoint.
+
+    Grouping first, then paginating the resulting destination list (not the
+    raw trip list) - a single destination's trips can span multiple years,
+    so paginating years directly would sometimes split one destination's
+    history across pages."""
     trips = session.query(Trip).order_by(Trip.start_ts.desc()).all()
 
     total_days = 0
-    out = []
+    groups: dict[tuple[str | None, str | None], dict] = {}
+    order: list[tuple[str | None, str | None]] = []
     for t in trips:
         days = max(1, (t.end_ts - t.start_ts) // 86400 + 1)
         total_days += days
-        out.append(
+        key = (t.primary_city, t.primary_country)
+        if key not in groups:
+            groups[key] = {
+                "primary_city": t.primary_city,
+                "primary_country": t.primary_country,
+                "primary_country_code": t.primary_country_code,
+                "trip_count": 0,
+                "total_days": 0,
+                "last_visit_ts": t.end_ts,
+                "trips": [],
+            }
+            order.append(key)  # trips are pre-sorted desc, so first-seen = most recent for this destination
+        group = groups[key]
+        group["trip_count"] += 1
+        group["total_days"] += days
+        group["last_visit_ts"] = max(group["last_visit_ts"], t.end_ts)
+        group["trips"].append(
             {
                 "id": t.id,
                 "start_ts": t.start_ts,
                 "end_ts": t.end_ts,
                 "days": days,
-                "primary_city": t.primary_city,
-                "primary_country": t.primary_country,
-                "primary_country_code": t.primary_country_code,
                 "visits": [
                     {
                         "lat": v.lat,
@@ -40,7 +66,19 @@ def get_trips(session: Session = Depends(db_dependency)):
             }
         )
 
-    return {"trips": out, "totals": {"trip_count": len(out), "day_count": total_days}}
+    destinations = [groups[k] for k in order]
+    total_destinations = len(destinations)
+    start = (page - 1) * page_size
+    page_items = destinations[start : start + page_size]
+
+    return {
+        "destinations": page_items,
+        "page": page,
+        "page_size": page_size,
+        "total_destinations": total_destinations,
+        "total_pages": max(1, (total_destinations + page_size - 1) // page_size),
+        "totals": {"trip_count": len(trips), "day_count": total_days},
+    }
 
 
 @router.get("/api/trips/{trip_id}")

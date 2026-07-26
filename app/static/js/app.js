@@ -2,10 +2,15 @@ function slugify(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-function countryFlag(code) {
+// Unicode flag emoji don't render as actual flags on Windows (no font
+// support there) - it falls back to a generic placeholder glyph instead,
+// the same one repeated for every country. A real flag image sidesteps
+// that platform gap entirely. flagcdn.com is free, keyless, and serves by
+// plain ISO 3166-1 alpha-2 code, which is exactly what country_code
+// already is throughout this app.
+function flagImageUrl(code, width) {
   if (!code || code.length !== 2) return '';
-  const base = 127397; // regional indicator offset from ASCII
-  return String.fromCodePoint(...[...code.toUpperCase()].map((c) => c.charCodeAt(0) + base));
+  return `https://flagcdn.com/w${width || 320}/${code.toLowerCase()}.png`;
 }
 
 function formatMiles(m) {
@@ -93,11 +98,11 @@ function waypoint() {
     tab: 'day',
 
     day: { date: todayIso(), data: null, loading: false, map: null, overview: null },
-    trips: { data: null, loading: false, map: null, detail: null, detailLoading: false, detailMap: null },
+    trips: { data: null, loading: false, page: 1, map: null, detail: null, detailLoading: false, detailMap: null },
     insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false },
     places: { data: null, loading: false, category: null, categoryData: null },
     cities: { data: null, loading: false },
-    world: { data: null, loading: false, map: null },
+    world: { data: null, loading: false, map: null, detail: null, detailLoading: false, detailMap: null },
 
     placeEdit: {
       open: false, placeId: null, name: '', category: 'Other places', city: '', country: '', countryCode: '',
@@ -119,7 +124,7 @@ function waypoint() {
     formatTime,
     formatDateRange,
     formatRelative,
-    countryFlag,
+    flagImageUrl,
     slugify,
     categoryIcon(cat) { return CATEGORY_ICONS[cat] || '\u{1F4CD}'; },
     modeIcon(mode) { return MODE_ICONS[mode] || 'move'; },
@@ -130,17 +135,25 @@ function waypoint() {
     // photo immediately rather than the browser reusing its own cached
     // response for the same URL.
     imageCacheBust: {},
-    imageUrl(query, fallback) {
+    // geo=true asserts this query is always a real place (a Trip/City name)
+    // - see app/images.py's require_coordinates for why that's checked more
+    // strictly than an arbitrary business/place name (Wikipedia's search
+    // matched "Reading" to its article on the activity of reading, not the
+    // town, since that's a real page title match on word overlap alone).
+    imageUrl(query, fallback, geo) {
       if (!query) return '';
       const v = this.imageCacheBust[query] || 0;
       const params = new URLSearchParams({ q: query, v });
+      if (geo) params.set('geo', 'true');
       if (fallback && fallback !== query) params.set('fallback', fallback);
       return `/api/images?${params}`;
     },
-    async refreshCardImage(query) {
+    async refreshCardImage(query, geo) {
       if (!query) return;
       try {
-        await fetch(`/api/images/refresh?q=${encodeURIComponent(query)}`, { method: 'POST' });
+        const params = new URLSearchParams({ q: query });
+        if (geo) params.set('geo', 'true');
+        await fetch(`/api/images/refresh?${params}`, { method: 'POST' });
       } catch (e) { console.error('Failed to refresh image', e); }
       this.imageCacheBust[query] = (this.imageCacheBust[query] || 0) + 1;
     },
@@ -175,6 +188,7 @@ function waypoint() {
         if (tab === 'trips' && this.trips.map) this.trips.map.invalidateSize();
         if (tab === 'trips' && this.trips.detailMap) this.trips.detailMap.invalidateSize();
         if (tab === 'world' && this.world.map) this.world.map.invalidateSize();
+        if (tab === 'world' && this.world.detailMap) this.world.detailMap.invalidateSize();
       });
     },
 
@@ -244,16 +258,27 @@ function waypoint() {
     async loadTrips() {
       this.trips.loading = true;
       try {
-        const res = await fetch('/api/trips');
+        const res = await fetch(`/api/trips?page=${this.trips.page}`);
         this.trips.data = await res.json();
         this.$nextTick(() => this.renderTripsMap());
       } catch (e) { console.error('Failed to load trips', e); }
       finally { this.trips.loading = false; }
     },
+    changeTripsPage(delta) {
+      const next = this.trips.page + delta;
+      if (next < 1 || (this.trips.data && next > this.trips.data.total_pages)) return;
+      this.trips.page = next;
+      this.loadTrips();
+    },
+    // Overview map shows pins for the current page's destinations only, not
+    // all 800 trips at once - that many markers was unwieldy anyway, and
+    // the World tab already covers the "whole history at a glance" view.
     renderTripsMap() {
       if (!this.trips.map) this.trips.map = wpInitMap('trips-map-container');
-      const pins = this.trips.data.trips.flatMap((t) =>
-        t.visits.map((v) => ({ lat: v.lat, lon: v.lon, category: v.category, label: `<b>${v.place_name || t.primary_city || 'Visit'}</b>` }))
+      const pins = this.trips.data.destinations.flatMap((d) =>
+        d.trips.flatMap((t) =>
+          t.visits.map((v) => ({ lat: v.lat, lon: v.lon, category: v.category, label: `<b>${v.place_name || d.primary_city || 'Visit'}</b>` }))
+        )
       );
       wpRenderPins(this.trips.map, pins);
     },
@@ -340,6 +365,26 @@ function waypoint() {
       if (!this.world.map) this.world.map = wpInitMap('world-map-container');
       const visitedCodes = new Set(this.world.data.countries.map((c) => c.country_code).filter(Boolean));
       wpRenderWorldMap(this.world.map, visitedCodes);
+    },
+    async openCountry(countryCode) {
+      if (!countryCode) return;
+      this.world.detail = null;
+      this.world.detailLoading = true;
+      try {
+        const res = await fetch(`/api/world/${countryCode}`);
+        this.world.detail = await res.json();
+        this.$nextTick(() => this.renderCountryMap());
+      } catch (e) { console.error('Failed to load country detail', e); }
+      finally { this.world.detailLoading = false; }
+    },
+    closeCountry() { this.world.detail = null; },
+    renderCountryMap() {
+      if (!this.world.detailMap) this.world.detailMap = wpInitMap('country-detail-map-container');
+      const pins = this.world.detail.pins.map((p) => ({
+        lat: p.lat, lon: p.lon, category: p.category,
+        label: `<b>${p.name || 'Unnamed place'}</b><br>${p.city || ''}`,
+      }));
+      wpRenderPins(this.world.detailMap, pins);
     },
 
     // ─── Place correction ───

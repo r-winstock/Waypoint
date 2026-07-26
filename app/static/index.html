@@ -74,10 +74,13 @@
       </div>
 
       <template x-if="day.overview && day.overview.years.length > 1">
-        <div class="flex items-end gap-1 mb-4" style="height: 36px; overflow-x: auto">
-          <template x-for="y in yearBarHeights()" :key="y.year">
-            <div class="year-bar" :class="y.active && 'active'" :style="`height:${y.height}px`" :title="y.year" @click="goToYear(y.year)"></div>
-          </template>
+        <div class="mb-4">
+          <div class="text-xs mb-1" style="color: var(--wp-fg-dim)">Visits per year — click a bar to jump</div>
+          <div class="flex items-end gap-1" style="height: 36px; overflow-x: auto">
+            <template x-for="y in yearBarHeights()" :key="y.year">
+              <div class="year-bar" :class="y.active && 'active'" :style="`height:${y.height}px`" :title="y.year + ' — click to jump'" @click="goToYear(y.year)"></div>
+            </template>
+          </div>
         </div>
       </template>
 
@@ -98,7 +101,11 @@
             </div>
           </div>
 
-          <div id="map-container" class="mb-5"></div>
+          <div id="map-container" class="mb-3"></div>
+          <div class="text-xs mb-5" style="color: var(--wp-fg-dim)">
+            <span style="color: #3b82f6">■</span> Recorded GPS path &nbsp;·&nbsp;
+            <span style="color: var(--wp-accent)">■</span> Estimated route (no GPS log for that stretch)
+          </div>
 
           <template x-if="!day.data.timeline.length">
             <div class="empty-state">No location data for this day yet.</div>
@@ -169,26 +176,57 @@
                 <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.trip_count"></span> <span style="color: var(--wp-fg-muted)">trips</span></div>
                 <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.day_count"></span> <span style="color: var(--wp-fg-muted)">days</span></div>
               </div>
-              <template x-if="!trips.data.trips.length">
+              <template x-if="!trips.data.destinations.length">
                 <div class="empty-state">No trips detected yet — set a home location in Settings so Waypoint can tell when you're away.</div>
               </template>
               <div class="grid-cards">
-                <template x-for="t in trips.data.trips" :key="t.id">
-                  <div class="trip-card" x-data="{imgFailed: false}" @click="openTrip(t.id)">
-                    <div class="banner" :class="!imgFailed && (t.primary_city || t.primary_country) && 'has-photo'">
-                      <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(t.primary_city || t.primary_country)" @error="imgFailed = true">
+                <template x-for="d in trips.data.destinations" :key="(d.primary_city || '') + '|' + (d.primary_country || '')">
+                  <div class="trip-card" x-data="{imgFailed: false, expanded: false}"
+                       @click="d.trip_count > 1 ? (expanded = !expanded) : openTrip(d.trips[0].id)">
+                    <div class="banner" :class="!imgFailed && (d.primary_city || d.primary_country) && 'has-photo'">
+                      <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(d.primary_city || d.primary_country, null, true)" @error="imgFailed = true">
                       <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                      <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(t.primary_city || t.primary_country); imgFailed = false" title="Refresh photo">
+                      <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true); imgFailed = false" title="Refresh photo">
                         <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                       </button>
-                      <div class="title" x-text="t.primary_city || t.primary_country || 'Trip'"></div>
+                      <span class="count-badge" x-show="d.trip_count > 1" x-text="d.trip_count + ' visits'" style="position: absolute; top: 12px; left: 14px"></span>
+                      <div class="title" x-text="d.primary_city || d.primary_country || 'Trip'"></div>
                     </div>
                     <div class="body">
-                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatDateRange(t.start_ts, t.end_ts)"></div>
-                      <div class="text-sm mt-1" x-text="t.days + ' day' + (t.days > 1 ? 's' : '') + (t.primary_country ? ' · ' + t.primary_country : '')"></div>
+                      <template x-if="d.trip_count === 1">
+                        <div>
+                          <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatDateRange(d.trips[0].start_ts, d.trips[0].end_ts)"></div>
+                          <div class="text-sm mt-1" x-text="d.trips[0].days + ' day' + (d.trips[0].days > 1 ? 's' : '') + (d.primary_country ? ' · ' + d.primary_country : '')"></div>
+                        </div>
+                      </template>
+                      <template x-if="d.trip_count > 1">
+                        <div>
+                          <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="d.total_days + ' day' + (d.total_days > 1 ? 's' : '') + ' total · last ' + formatRelative(d.last_visit_ts)"></div>
+                          <div class="text-xs mt-1 flex items-center gap-1" style="color: var(--wp-accent-light)">
+                            <i :data-lucide="expanded ? 'chevron-up' : 'chevron-down'" class="w-3 h-3"></i>
+                            <span x-text="expanded ? 'Hide visits' : 'Show ' + d.trip_count + ' visits'"></span>
+                          </div>
+                          <template x-if="expanded">
+                            <div class="mt-2" style="border-top: 1px solid var(--wp-border); padding-top: 8px">
+                              <template x-for="t in d.trips" :key="t.id">
+                                <div class="text-sm py-1" style="cursor: pointer" @click.stop="openTrip(t.id)">
+                                  <span x-text="formatDateRange(t.start_ts, t.end_ts)"></span>
+                                  <span style="color: var(--wp-fg-dim)" x-text="' · ' + t.days + ' day' + (t.days > 1 ? 's' : '')"></span>
+                                </div>
+                              </template>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
                     </div>
                   </div>
                 </template>
+              </div>
+
+              <div class="flex items-center justify-center gap-3 mt-5" x-show="trips.data.total_pages > 1">
+                <button class="btn-icon" :disabled="trips.page <= 1" @click="changeTripsPage(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+                <span class="text-sm" style="color: var(--wp-fg-muted)" x-text="'Page ' + trips.page + ' of ' + trips.data.total_pages"></span>
+                <button class="btn-icon" :disabled="trips.page >= trips.data.total_pages" @click="changeTripsPage(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
               </div>
             </div>
           </template>
@@ -350,9 +388,9 @@
       <div class="grid-cards">
         <template x-for="c in (cities.data ? cities.data.cities : [])" :key="c.name">
           <div class="grid-card grid-card--photo" x-data="{imgFailed: false}" style="cursor: default">
-            <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name)" @error="imgFailed = true">
+            <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true)" @error="imgFailed = true">
             <div x-show="!imgFailed" class="card-photo-scrim"></div>
-            <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(c.name); imgFailed = false" title="Refresh photo">
+            <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(c.name, true); imgFailed = false" title="Refresh photo">
               <i data-lucide="refresh-cw" class="w-3 h-3"></i>
             </button>
             <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
@@ -367,20 +405,54 @@
 
     <!-- ═══════════ WORLD ═══════════ -->
     <div x-show="tab==='world'">
-      <div id="world-map-container" class="mb-5"></div>
-      <template x-if="world.data && !world.data.countries.length">
-        <div class="empty-state">No countries visited yet.</div>
-      </template>
-      <div class="grid-cards">
-        <template x-for="c in (world.data ? world.data.countries : [])" :key="c.name">
-          <div class="grid-card" style="cursor: default">
-            <span class="count-badge" x-text="c.city_count + ' cit' + (c.city_count === 1 ? 'y' : 'ies')"></span>
-            <div class="text-2xl" x-text="countryFlag(c.country_code)"></div>
-            <div class="title" x-text="c.name"></div>
-            <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+      <template x-if="!world.detail && !world.detailLoading">
+        <div>
+          <div id="world-map-container" class="mb-5"></div>
+          <template x-if="world.data && !world.data.countries.length">
+            <div class="empty-state">No countries visited yet.</div>
+          </template>
+          <div class="grid-cards">
+            <template x-for="c in (world.data ? world.data.countries : [])" :key="c.name">
+              <div class="grid-card grid-card--photo" x-data="{imgFailed: false}" @click="openCountry(c.country_code)">
+                <img x-show="!imgFailed && c.country_code" class="card-photo-img" style="object-fit: contain; background: var(--wp-surface-2)" :src="flagImageUrl(c.country_code)" @error="imgFailed = true">
+                <div x-show="!imgFailed && c.country_code" class="card-photo-scrim"></div>
+                <span class="count-badge" x-text="c.city_count + ' cit' + (c.city_count === 1 ? 'y' : 'ies')"></span>
+                <div class="card-photo-content">
+                  <div class="title" x-text="c.name"></div>
+                  <div class="subtitle" :style="(!imgFailed && c.country_code) ? 'color: rgba(255,255,255,0.85)' : ''" x-text="formatRelative(c.last_visit_ts)"></div>
+                </div>
+              </div>
+            </template>
           </div>
-        </template>
-      </div>
+        </div>
+      </template>
+
+      <template x-if="world.detailLoading">
+        <div class="empty-state">Loading country…</div>
+      </template>
+
+      <template x-if="world.detail">
+        <div>
+          <button class="nav-tab mb-3" @click="closeCountry()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to world</button>
+          <div class="flex items-center gap-2 mb-1">
+            <img :src="flagImageUrl(world.detail.country_code, 80)" style="width: 32px; height: auto; border-radius: 3px">
+            <div class="text-lg font-semibold display" x-text="world.detail.country_name"></div>
+          </div>
+          <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="world.detail.cities.length + ' cit' + (world.detail.cities.length === 1 ? 'y' : 'ies') + ' visited'"></div>
+
+          <div id="country-detail-map-container" class="mb-5"></div>
+
+          <div class="grid-cards">
+            <template x-for="c in world.detail.cities" :key="c.name">
+              <div class="grid-card" style="cursor: default">
+                <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
+                <div class="title" x-text="c.name"></div>
+                <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
     </div>
 
   </main>
