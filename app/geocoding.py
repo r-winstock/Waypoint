@@ -21,6 +21,15 @@ _last_call = 0.0
 # without hammering the cache with near-duplicate coordinates.
 ROUND_DP = 4
 
+# GPS drift across repeat visits to the same real place (especially indoors,
+# e.g. home) often rounds to a different ROUND_DP cell each time, missing the
+# exact-match cache above and creating a fresh Place row per visit - ten
+# separate "Ashmead Road, Bedford" rows for one house before this existed.
+# Reused only when the freshly-resolved name+city also matches (see
+# _find_duplicate_place), so two genuinely distinct same-named places within
+# a city (e.g. two different Aldi branches) aren't wrongly merged.
+PLACE_DEDUP_RADIUS_M = 300.0
+
 CATEGORY_RULES: dict[str, dict[str, str] | str] = {
     "amenity": {
         "restaurant": "Food and drink",
@@ -145,6 +154,29 @@ def find_nearby_places(lat: float, lon: float, radius_m: float = 100.0, limit: i
     return deduped
 
 
+def _find_duplicate_place(session: Session, lat: float, lon: float, name: str | None, city: str | None) -> Place | None:
+    """An already-resolved place with the same name+city within
+    PLACE_DEDUP_RADIUS_M, if any - see that constant for why this exists."""
+    if not name:
+        return None
+
+    box_deg = (PLACE_DEDUP_RADIUS_M / 111_320) * 1.5  # generous prefilter box, exact haversine below
+    lat_r, lon_r = round(lat, ROUND_DP), round(lon, ROUND_DP)
+    query = session.query(Place).filter(
+        Place.name == name,
+        Place.lat_round.between(lat_r - box_deg, lat_r + box_deg),
+        Place.lon_round.between(lon_r - box_deg, lon_r + box_deg),
+    )
+    query = query.filter(Place.city == city) if city is not None else query.filter(Place.city.is_(None))
+
+    best, best_distance = None, PLACE_DEDUP_RADIUS_M
+    for candidate in query.all():
+        distance = _haversine_m(lat, lon, candidate.lat_round, candidate.lon_round)
+        if distance <= best_distance:
+            best, best_distance = candidate, distance
+    return best
+
+
 def _throttle() -> None:
     global _last_call
     wait = MIN_INTERVAL_S - (time.monotonic() - _last_call)
@@ -183,20 +215,36 @@ def resolve_place(
         return cached
 
     data = _reverse_geocode(lat, lon)
-    place = Place(lat_round=lat_r, lon_round=lon_r, google_place_id=google_place_id)
+    name = category = city = country = country_code = raw_json = None
     if data is not None:
         address = data.get("address", {})
-        place.name = data.get("name") or address.get("road") or data.get("display_name")
-        place.category = _categorise(data.get("category"), data.get("type"))
-        place.city = address.get("city") or address.get("town") or address.get("village") or address.get("municipality")
-        place.country = address.get("country")
+        name = data.get("name") or address.get("road") or data.get("display_name")
+        category = _categorise(data.get("category"), data.get("type"))
+        city = address.get("city") or address.get("town") or address.get("village") or address.get("municipality")
+        country = address.get("country")
         code = address.get("country_code")
-        place.country_code = code.upper() if code else None
-        place.raw_json = json.dumps(data)
+        country_code = code.upper() if code else None
+        raw_json = json.dumps(data)
     else:
-        place.name = None
-        place.category = "Other places"
+        category = "Other places"
 
+    duplicate = _find_duplicate_place(session, lat, lon, name, city)
+    if duplicate is not None:
+        if google_place_id is not None and duplicate.google_place_id is None:
+            duplicate.google_place_id = google_place_id
+        return duplicate
+
+    place = Place(
+        lat_round=lat_r,
+        lon_round=lon_r,
+        google_place_id=google_place_id,
+        name=name,
+        category=category,
+        city=city,
+        country=country,
+        country_code=country_code,
+        raw_json=raw_json,
+    )
     session.add(place)
     session.flush()
     return place
