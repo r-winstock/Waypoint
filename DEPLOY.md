@@ -6,7 +6,7 @@ Tailwind frontend, OwnTracks as the location-collection client.
 | Setting | Value |
 |---|---|
 | Target host | **rowan** (192.168.1.70), Ubuntu 24.04, Docker + Portainer |
-| Source | GitHub (private, name TBC) -> `~/code/waypoint` on rowan |
+| Source | [github.com/r-winstock/Waypoint](https://github.com/r-winstock/Waypoint) (private) -> `~/code/waypoint` on rowan |
 | Image | `waypoint:latest` (built on rowan, no registry) |
 | Deploy | Portainer **stack** `waypoint` |
 | Network | `Macvlan` (external), static IP **192.168.0.228** (confirm free before first deploy) |
@@ -29,7 +29,7 @@ inside a **tmux** session on rowan so a dropped connection doesn't kill it.
 - **[rowan]**, first time only:
   ```bash
   mkdir -p ~/code && cd ~/code
-  git clone git@github.com:r-winstock/waypoint.git
+  git clone git@github.com:r-winstock/Waypoint.git waypoint
   ```
 - **[rowan]**, subsequent updates:
   ```bash
