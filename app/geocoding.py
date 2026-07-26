@@ -130,7 +130,19 @@ def find_nearby_places(lat: float, lon: float, radius_m: float = 100.0, limit: i
             }
         )
     results.sort(key=lambda r: r["distance_m"])
-    return results
+
+    # OSM roads are frequently split into several way segments sharing the
+    # same name (one per block) - Overpass returns each as a separate
+    # element, which showed up as "Gladstone Street" appearing 2-3 times in
+    # the alternatives list. Keep only the closest occurrence of each name.
+    deduped: list[dict] = []
+    seen_names: set[str] = set()
+    for r in results:
+        if r["name"] in seen_names:
+            continue
+        seen_names.add(r["name"])
+        deduped.append(r)
+    return deduped
 
 
 def _throttle() -> None:

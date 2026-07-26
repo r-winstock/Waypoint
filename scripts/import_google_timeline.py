@@ -57,7 +57,7 @@ MODE_MAP = {
     "IN_SUBWAY": "subway",
     "IN_TRAM": "tram",
     "IN_FERRY": "ferry",
-    "BOATING": "ferry",
+    "BOATING": "boating",
     "FLYING": "flying",
     # Not real travel - no segment created: STILL, TILTING, UNKNOWN,
     # UNKNOWN_ACTIVITY_TYPE, EXITING_VEHICLE.

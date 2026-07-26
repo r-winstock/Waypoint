@@ -104,6 +104,12 @@ class Trip(Base):
     primary_city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     primary_country: Mapped[str | None] = mapped_column(String(128), nullable=True)
     primary_country_code: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # "computed" (the gap/radius heuristic in _rebuild_trips, rebuilt every
+    # time it runs) or "kml_import" (trip boundaries taken directly from the
+    # source file's own folder structure, which is more reliable than any
+    # heuristic - see scripts/import_travellerspoint_kml.py). _rebuild_trips
+    # only ever deletes/recomputes source="computed" rows.
+    source: Mapped[str] = mapped_column(String(16), default="computed")
 
     visits: Mapped[list[Visit]] = relationship(back_populates="trip", order_by="Visit.start_ts")
 

@@ -283,7 +283,12 @@
   </main>
 
   <!-- ═══════════ PLACE CORRECTION MODAL ═══════════ -->
-  <div class="modal-backdrop" x-show="placeEdit.open" x-transition.opacity @click.self="closePlaceEdit()" style="display: none">
+  <!-- No x-transition here deliberately: it desynced from placeEdit.open on
+       rapid toggles, leaving the backdrop's real display:flex in place while
+       Alpine's state said closed - invisibly eating clicks underneath
+       (that's what broke the Places-drilldown edit pencil). Plain x-show
+       sets display synchronously with no animation-completion step to lose. -->
+  <div class="modal-backdrop" x-show="placeEdit.open" @click.self="closePlaceEdit()" style="display: none">
     <div class="modal">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-lg font-semibold display">Fix this place</h3>

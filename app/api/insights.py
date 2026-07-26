@@ -17,7 +17,7 @@ TREND_MONTHS = 6
 # response if it actually has data; this just keeps the order consistent
 # (walking first, flying last) rather than whatever order the query returns.
 TRAVEL_MODE_ORDER = [
-    "walking", "cycling", "driving", "taxi", "bus", "train", "subway", "tram", "ferry", "flying",
+    "walking", "cycling", "driving", "taxi", "bus", "train", "subway", "tram", "ferry", "boating", "flying",
 ]
 VISIT_CATEGORIES = ["Food and drink", "Shopping", "Hotels", "Culture", "Sports", "Airports", "Other places"]
 

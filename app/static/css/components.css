@@ -117,7 +117,9 @@ h1, h2, h3, .display {
 .modal-backdrop {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 90;
+  /* Leaflet's own panes/controls use z-index up to ~1000 internally, so the
+     modal rendered behind the map at z-index 90 - comfortably above that. */
+  z-index: 2000;
   display: flex; align-items: center; justify-content: center;
   padding: 20px;
 }
@@ -202,6 +204,7 @@ h1, h2, h3, .display {
 .pill-mode-subway   { background: color-mix(in srgb, var(--wp-mode-subway) 18%, transparent); color: var(--wp-mode-subway); border-color: var(--wp-mode-subway); }
 .pill-mode-tram     { background: color-mix(in srgb, var(--wp-mode-tram) 18%, transparent); color: var(--wp-mode-tram); border-color: var(--wp-mode-tram); }
 .pill-mode-ferry    { background: color-mix(in srgb, var(--wp-mode-ferry) 18%, transparent); color: var(--wp-mode-ferry); border-color: var(--wp-mode-ferry); }
+.pill-mode-boating  { background: color-mix(in srgb, var(--wp-mode-boating) 18%, transparent); color: var(--wp-mode-boating); border-color: var(--wp-mode-boating); }
 .pill-mode-flying   { background: color-mix(in srgb, var(--wp-mode-flying) 18%, transparent); color: var(--wp-mode-flying); border-color: var(--wp-mode-flying); }
 
 /* ─── Stat tiles (Insights) ─── */

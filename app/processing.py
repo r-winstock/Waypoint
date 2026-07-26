@@ -247,7 +247,10 @@ def _geocode_visits(session: Session) -> None:
 
 
 def _rebuild_trips(session: Session) -> None:
-    session.execute(delete(Trip))
+    # Only ever touches source="computed" trips - kml_import trips get their
+    # boundaries directly from the source file's own folder structure (see
+    # scripts/import_travellerspoint_kml.py) and are never rebuilt here.
+    session.execute(delete(Trip).where(Trip.source == "computed"))
 
     home_lat = get_setting(session, "home_lat", "")
     home_lon = get_setting(session, "home_lon", "")
@@ -257,7 +260,17 @@ def _rebuild_trips(session: Session) -> None:
     home_lat_f, home_lon_f = float(home_lat), float(home_lon)
     home_radius_m = float(get_setting(session, "home_radius_m", "500"))
 
-    visits = session.query(Visit).order_by(Visit.start_ts).all()
+    # kml_import visits are excluded: they already belong to a trip assigned
+    # directly at import time, and mixing them into this gap/radius heuristic
+    # is exactly what merged two separate real trips 14 days apart into one
+    # nonsensical multi-week run (sparse waypoint-only data has no "at home"
+    # visits in between to break the run, unlike continuous tracking).
+    visits = (
+        session.query(Visit)
+        .filter(Visit.source != "kml_import")
+        .order_by(Visit.start_ts)
+        .all()
+    )
 
     run: list[Visit] = []
     for visit in visits:
@@ -268,6 +281,27 @@ def _rebuild_trips(session: Session) -> None:
             _flush_trip_run(session, run)
             run = []
     _flush_trip_run(session, run)
+
+
+def _primary_city_country(visits: list[Visit]) -> tuple[str | None, str | None, str | None]:
+    """Time-weighted mode city (and the country tied to that specific city,
+    not just whichever visit happens to be last - a trip can include a
+    UK-based visit, e.g. the airport, alongside the actual foreign
+    destination). Shared by the computed gap/radius grouping and the KML
+    importer's direct per-folder trips."""
+    city_duration: Counter[str] = Counter()
+    city_country: dict[str, tuple[str | None, str | None]] = {}
+    for visit in visits:
+        duration = max(visit.end_ts - visit.start_ts, 60)
+        if visit.place and visit.place.city:
+            city_duration[visit.place.city] += duration
+            city_country[visit.place.city] = (visit.place.country, visit.place.country_code)
+
+    if not city_duration:
+        return None, None, None
+    primary_city = city_duration.most_common(1)[0][0]
+    country, country_code = city_country[primary_city]
+    return primary_city, country, country_code
 
 
 def _flush_trip_run(session: Session, run: list[Visit]) -> None:
@@ -281,25 +315,8 @@ def _flush_trip_run(session: Session, run: list[Visit]) -> None:
     if run[-1].end_ts - run[0].start_ts < TRIP_MIN_DURATION_S:
         return
 
-    trip = Trip(start_ts=run[0].start_ts, end_ts=run[-1].end_ts)
-
-    city_duration: Counter[str] = Counter()
-    city_country: dict[str, tuple[str | None, str | None]] = {}
-    for visit in run:
-        duration = max(visit.end_ts - visit.start_ts, 60)
-        if visit.place and visit.place.city:
-            city_duration[visit.place.city] += duration
-            # Country tied to whichever city it belongs to, not just
-            # whichever visit happens to be iterated last - a trip run can
-            # include a UK-based visit (e.g. the airport) alongside the
-            # actual foreign destination, and country must follow
-            # primary_city, not run order.
-            city_country[visit.place.city] = (visit.place.country, visit.place.country_code)
-
-    if city_duration:
-        primary_city = city_duration.most_common(1)[0][0]
-        trip.primary_city = primary_city
-        trip.primary_country, trip.primary_country_code = city_country[primary_city]
+    trip = Trip(start_ts=run[0].start_ts, end_ts=run[-1].end_ts, source="computed")
+    trip.primary_city, trip.primary_country, trip.primary_country_code = _primary_city_country(run)
 
     session.add(trip)
     session.flush()
