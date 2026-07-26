@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waypoint — your own timeline</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Bevan&family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/theme-atlas.css">
+<link rel="stylesheet" href="/static/css/theme-voyage.css">
+<link rel="stylesheet" href="/static/css/components.css">
+
+<script>
+  // Pre-paint theme application: avoids a flash of the wrong theme on load.
+  (function () {
+    const stored = localStorage.getItem('waypoint-theme') || 'atlas';
+    document.documentElement.setAttribute('data-theme', stored);
+  })();
+</script>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="/static/js/map.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<script src="/static/js/app.js"></script>
+</head>
+
+<body class="antialiased">
+<div x-data="waypoint()" x-init="init()">
+
+  <header class="top-bar">
+    <div class="max-w-[1400px] mx-auto px-6 py-3 flex items-center justify-between flex-wrap gap-3">
+      <div class="flex items-center gap-6 flex-wrap">
+        <h1 class="text-xl font-bold display" style="color: var(--wp-fg-primary)">Waypoint</h1>
+        <nav class="flex items-center gap-1 flex-wrap">
+          <button class="nav-tab" :class="tab==='day' && 'active'" @click="switchTab('day')"><i data-lucide="calendar" class="w-4 h-4"></i> Day</button>
+          <button class="nav-tab" :class="tab==='trips' && 'active'" @click="switchTab('trips')"><i data-lucide="briefcase" class="w-4 h-4"></i> Trips</button>
+          <button class="nav-tab" :class="tab==='insights' && 'active'" @click="switchTab('insights')"><i data-lucide="bar-chart-2" class="w-4 h-4"></i> Insights</button>
+          <button class="nav-tab" :class="tab==='places' && 'active'" @click="switchTab('places')"><i data-lucide="map-pin" class="w-4 h-4"></i> Places</button>
+          <button class="nav-tab" :class="tab==='cities' && 'active'" @click="switchTab('cities')"><i data-lucide="building-2" class="w-4 h-4"></i> Cities</button>
+          <button class="nav-tab" :class="tab==='world' && 'active'" @click="switchTab('world')"><i data-lucide="globe" class="w-4 h-4"></i> World</button>
+        </nav>
+      </div>
+
+      <div class="relative" x-data="{}" @click.outside="themeMenuOpen = false">
+        <button class="btn-icon" @click="themeMenuOpen = !themeMenuOpen" title="Change theme">
+          <i data-lucide="palette" class="w-4 h-4"></i>
+        </button>
+        <div x-show="themeMenuOpen" x-transition class="theme-menu" style="display: none">
+          <button :class="theme==='atlas' && 'active'" @click="setTheme('atlas')"><i data-lucide="moon" class="w-4 h-4"></i> Atlas</button>
+          <button :class="theme==='voyage' && 'active'" @click="setTheme('voyage')"><i data-lucide="scroll" class="w-4 h-4"></i> Voyage</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto px-6 py-6">
+
+    <!-- ═══════════ DAY ═══════════ -->
+    <div x-show="tab==='day'">
+      <div class="flex items-center justify-between mb-4">
+        <button class="btn-icon" @click="changeDay(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+        <div class="text-lg font-semibold display" x-text="new Date(day.date).toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})"></div>
+        <button class="btn-icon" @click="changeDay(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+      </div>
+
+      <template x-if="day.data">
+        <div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <div class="stat-tile">
+              <div class="label">Driving</div>
+              <div class="value" x-text="formatMiles(day.data.stats.driving_m)"></div>
+              <div class="detail" x-text="formatDuration(day.data.stats.driving_s)"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Flying</div>
+              <div class="value" x-text="formatMiles(day.data.stats.flying_m)"></div>
+              <div class="detail" x-text="formatDuration(day.data.stats.flying_s)"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Walking</div>
+              <div class="value" x-text="formatMiles(day.data.stats.walking_m)"></div>
+              <div class="detail" x-text="formatDuration(day.data.stats.walking_s)"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Visits</div>
+              <div class="value" x-text="day.data.stats.visits"></div>
+              <div class="detail">places stayed</div>
+            </div>
+          </div>
+
+          <div id="map-container" class="mb-5"></div>
+
+          <template x-if="!day.data.timeline.length">
+            <div class="empty-state">No location data for this day yet.</div>
+          </template>
+
+          <div>
+            <template x-for="entry in day.data.timeline" :key="entry.start_ts + entry.type">
+              <div class="day-row">
+                <div class="flex flex-col items-center">
+                  <div class="dot" :style="entry.type==='visit' ? '' : `background: var(--wp-mode-${entry.mode})`"></div>
+                  <div class="line" style="height: 28px"></div>
+                </div>
+                <div class="flex-1 pb-2">
+                  <template x-if="entry.type==='visit'">
+                    <div>
+                      <div class="font-semibold" x-text="entry.place_name || 'Unnamed place'"></div>
+                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTime(entry.start_ts) + ' – ' + formatTime(entry.end_ts)].filter(Boolean).join(' · ')"></div>
+                      <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
+                    </div>
+                  </template>
+                  <template x-if="entry.type==='segment'">
+                    <div>
+                      <div class="font-medium capitalize" x-text="entry.mode"></div>
+                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatMiles(entry.distance_m) + ' · ' + formatDuration(entry.duration_s)"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ═══════════ TRIPS ═══════════ -->
+    <div x-show="tab==='trips'">
+      <div id="trips-map-container" class="mb-5"></div>
+      <template x-if="trips.data">
+        <div>
+          <div class="flex gap-6 mb-5">
+            <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.trip_count"></span> <span style="color: var(--wp-fg-muted)">trips</span></div>
+            <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.day_count"></span> <span style="color: var(--wp-fg-muted)">days</span></div>
+          </div>
+          <template x-if="!trips.data.trips.length">
+            <div class="empty-state">No trips detected yet — set a home location in Settings so Waypoint can tell when you're away.</div>
+          </template>
+          <div class="grid-cards">
+            <template x-for="t in trips.data.trips" :key="t.id">
+              <div class="trip-card">
+                <div class="banner"><div class="title" x-text="t.primary_city || t.primary_country || 'Trip'"></div></div>
+                <div class="body">
+                  <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatDateRange(t.start_ts, t.end_ts)"></div>
+                  <div class="text-sm mt-1" x-text="t.days + ' day' + (t.days > 1 ? 's' : '') + (t.primary_country ? ' · ' + t.primary_country : '')"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ═══════════ INSIGHTS ═══════════ -->
+    <div x-show="tab==='insights'">
+      <div class="flex items-center justify-between mb-4">
+        <button class="btn-icon" @click="changeMonth(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+        <div class="text-lg font-semibold display" x-text="monthLabel()"></div>
+        <button class="btn-icon" @click="changeMonth(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+      </div>
+
+      <template x-if="insights.data">
+        <div>
+          <h2 class="text-base font-semibold mb-2">Travel</h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+            <template x-for="mode in ['walking','driving','flying']" :key="mode">
+              <div class="stat-tile flex items-center justify-between">
+                <div>
+                  <div class="label capitalize" x-text="mode"></div>
+                  <div class="value" x-text="formatMiles(insights.data.travel[mode].distance_m)"></div>
+                  <div class="detail" x-text="formatDuration(insights.data.travel[mode].duration_s)"></div>
+                </div>
+                <div class="flex items-end gap-1" style="height: 32px">
+                  <template x-for="(h, idx) in sparklineHeights(insights.data.travel[mode].trend)" :key="idx">
+                    <div class="sparkline-bar" :style="`height:${h}px; background: var(--wp-mode-${mode})`"></div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <h2 class="text-base font-semibold mb-2">Visits</h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <template x-for="(v, category) in insights.data.visits" :key="category">
+              <div class="stat-tile flex items-center justify-between">
+                <div>
+                  <div class="label" x-text="category"></div>
+                  <div class="value" x-text="formatDuration(v.duration_s)"></div>
+                  <button class="text-xs mt-1" style="color: var(--wp-accent-light)" @click="switchTab('places'); openCategory(category)">See places</button>
+                </div>
+                <div class="flex items-end gap-1" style="height: 32px">
+                  <template x-for="(h, idx) in sparklineHeights(v.trend)" :key="idx">
+                    <div class="sparkline-bar" :style="`height:${h}px`"></div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ═══════════ PLACES ═══════════ -->
+    <div x-show="tab==='places'">
+      <template x-if="!places.category">
+        <div>
+          <template x-if="places.data && !places.data.categories.length">
+            <div class="empty-state">No places resolved yet.</div>
+          </template>
+          <div class="grid-cards">
+            <template x-for="c in (places.data ? places.data.categories : [])" :key="c.name">
+              <div class="grid-card" @click="openCategory(c.name)">
+                <span class="count-badge" x-text="c.count"></span>
+                <div class="text-2xl" x-text="categoryIcon(c.name)"></div>
+                <div class="title" x-text="c.name"></div>
+                <div class="subtitle" x-text="c.count + ' places'"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="places.category">
+        <div>
+          <button class="nav-tab mb-3" @click="closeCategory()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to categories</button>
+          <h2 class="text-lg font-semibold mb-3 display" x-text="places.category"></h2>
+          <div class="grid-cards">
+            <template x-for="p in (places.categoryData ? places.categoryData.places : [])" :key="p.name + p.city">
+              <div class="grid-card" style="cursor: default">
+                <div class="title" x-text="p.name || 'Unnamed place'"></div>
+                <div class="subtitle" x-text="p.city || ''"></div>
+                <div class="text-xs mt-2" style="color: var(--wp-fg-dim)" x-text="p.visit_count + ' visit' + (p.visit_count > 1 ? 's' : '') + ' · last ' + formatRelative(p.last_visit_ts)"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ═══════════ CITIES ═══════════ -->
+    <div x-show="tab==='cities'">
+      <template x-if="cities.data && !cities.data.cities.length">
+        <div class="empty-state">No cities visited yet.</div>
+      </template>
+      <div class="grid-cards">
+        <template x-for="c in (cities.data ? cities.data.cities : [])" :key="c.name">
+          <div class="grid-card" style="cursor: default">
+            <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
+            <div class="title" x-text="c.name"></div>
+            <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ═══════════ WORLD ═══════════ -->
+    <div x-show="tab==='world'">
+      <template x-if="world.data && !world.data.countries.length">
+        <div class="empty-state">No countries visited yet.</div>
+      </template>
+      <div class="grid-cards">
+        <template x-for="c in (world.data ? world.data.countries : [])" :key="c.name">
+          <div class="grid-card" style="cursor: default">
+            <span class="count-badge" x-text="c.city_count + ' cit' + (c.city_count === 1 ? 'y' : 'ies')"></span>
+            <div class="text-2xl" x-text="countryFlag(c.country_code)"></div>
+            <div class="title" x-text="c.name"></div>
+            <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.lucide) lucide.createIcons();
+    document.body.addEventListener('click', () => setTimeout(() => window.lucide && lucide.createIcons(), 0));
+  });
+</script>
+</body>
+</html>

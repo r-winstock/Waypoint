@@ -1,0 +1,11 @@
+# Local dev only. The rowan deployment uses a Portainer stack (see stack.yml
+# / DEPLOY.md), not this file.
+services:
+  waypoint:
+    build: .
+    container_name: waypoint-dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    restart: "no"

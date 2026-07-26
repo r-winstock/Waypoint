@@ -1,0 +1,19 @@
+# Portainer stack for rowan (192.168.1.70). Deploy via Portainer > Stacks.
+#
+# macvlan gives the container its own IP, so there is no port publishing;
+# the app on :8000 is reachable directly at that IP / waypoint.home.lan
+# (via NPM - see DEPLOY.md).
+services:
+  waypoint:
+    image: waypoint:latest
+    container_name: waypoint
+    restart: "no"            # house standard on rowan
+    volumes:
+      - /opt/dockerData/waypoint/data:/app/data
+    networks:
+      Macvlan:
+        ipv4_address: 192.168.0.228   # confirm free before first deploy
+
+networks:
+  Macvlan:
+    external: true

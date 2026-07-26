@@ -1,0 +1,34 @@
+/*
+  Waypoint design tokens - naming reference only, no values here.
+
+  Every value lives in a theme file (theme-atlas.css / theme-voyage.css),
+  scoped under `:root[data-theme="<name>"]`. Component CSS (app.css) reads
+  only these --wp-* custom properties, never a raw colour/font, so adding a
+  third theme later is purely a new theme file plus one new switcher option.
+
+  Structural:
+    --wp-radius-card, --wp-radius-pill, --wp-divider-style
+    --wp-font-display, --wp-font-body, --wp-font-mono
+    --wp-shadow-card, --wp-shadow-modal
+
+  Surfaces / text:
+    --wp-bg, --wp-bg-grad-1, --wp-bg-grad-2
+    --wp-surface-1, --wp-surface-1-hover, --wp-surface-2, --wp-surface-3, --wp-surface-modal
+    --wp-border, --wp-border-strong, --wp-border-divider
+    --wp-fg-primary, --wp-fg-secondary, --wp-fg-muted, --wp-fg-dim, --wp-fg-faint
+
+  Accent / status:
+    --wp-accent, --wp-accent-light, --wp-accent-soft, --wp-accent-bg, --wp-accent-border
+    --wp-danger, --wp-danger-bg, --wp-danger-border
+    --wp-warn, --wp-warn-bg, --wp-warn-border
+
+  Place categories (Places/Cities/World pills and grids):
+    --wp-cat-food, --wp-cat-shopping, --wp-cat-hotels, --wp-cat-culture,
+    --wp-cat-sports, --wp-cat-airports, --wp-cat-other
+
+  Travel modes (Day timeline, Insights bars):
+    --wp-mode-walking, --wp-mode-driving, --wp-mode-flying
+
+  Map (Leaflet popup theming, Day view):
+    --wp-map-popup-bg, --wp-map-popup-fg, --wp-map-popup-accent
+*/

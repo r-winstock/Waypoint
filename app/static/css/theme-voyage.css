@@ -1,0 +1,72 @@
+/*
+  Voyage theme - warm vintage "storybook travel journal" look, ported from
+  offsite-vote's palette/fonts/card treatment. A deliberately different
+  register from Atlas: parchment and brass rather than dark glass, Bevan
+  display type rather than Inter, dashed dividers rather than solid ones.
+*/
+
+:root[data-theme="voyage"] {
+  --wp-radius-card: 10px;
+  --wp-radius-pill: 20px;
+  --wp-divider-style: dashed;
+
+  --wp-font-display: 'Bevan', Georgia, serif;
+  --wp-font-body: 'Public Sans', system-ui, sans-serif;
+  --wp-font-mono: 'Public Sans', system-ui, sans-serif;
+
+  --wp-bg: #e2d6b8;
+  --wp-bg-grad-1: rgba(176, 127, 46, 0.05);
+  --wp-bg-grad-2: rgba(63, 122, 92, 0.04);
+
+  --wp-surface-1: #f8f2e1;
+  --wp-surface-1-hover: #fbf8f0;
+  --wp-surface-2: #f1e9d3;
+  --wp-surface-3: #e3dac6;
+  --wp-surface-modal: #f8f2e1;
+
+  --wp-border: #cdbd94;
+  --wp-border-strong: #c7bc9e;
+  --wp-border-divider: #c7bc9e;
+
+  --wp-fg-primary: #2a2417;
+  --wp-fg-secondary: #453c26;
+  --wp-fg-muted: #6f6248;
+  --wp-fg-dim: #8a7a4a;
+  --wp-fg-faint: #b9ac86;
+
+  --wp-accent: #b07f2e;
+  --wp-accent-light: #e0a852;
+  --wp-accent-soft: #f0c98a;
+  --wp-accent-bg: rgba(176, 127, 46, 0.15);
+  --wp-accent-border: #b07f2e;
+
+  --wp-danger: #a4432f;
+  --wp-danger-bg: rgba(164, 67, 47, 0.15);
+  --wp-danger-border: #a4432f;
+
+  --wp-warn: #a4432f;
+  --wp-warn-bg: rgba(164, 67, 47, 0.15);
+  --wp-warn-border: #a4432f;
+
+  --wp-shadow-card: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --wp-shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.5);
+
+  /* Place categories */
+  --wp-cat-food: #4f9670;
+  --wp-cat-shopping: #b07f2e;
+  --wp-cat-hotels: #8a5f1f;
+  --wp-cat-culture: #6f6248;
+  --wp-cat-sports: #3f7a5c;
+  --wp-cat-airports: #a4432f;
+  --wp-cat-other: #8a7a4a;
+
+  /* Travel modes */
+  --wp-mode-walking: #3f7a5c;
+  --wp-mode-driving: #b07f2e;
+  --wp-mode-flying: #a4432f;
+
+  /* Leaflet popup */
+  --wp-map-popup-bg: #f1e9d3;
+  --wp-map-popup-fg: #2a2417;
+  --wp-map-popup-accent: #e0a852;
+}

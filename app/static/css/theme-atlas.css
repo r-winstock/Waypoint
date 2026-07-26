@@ -1,0 +1,72 @@
+/*
+  Atlas theme - dark glass-morphism dashboard, ported from Cairn's
+  static/cairn.css token values (--c-* -> --wp-*). Default theme: closest
+  match to Google Timeline's own dark UI, most legible for a data-dense app.
+*/
+
+:root,
+:root[data-theme="atlas"] {
+  --wp-radius-card: 16px;
+  --wp-radius-pill: 999px;
+  --wp-divider-style: solid;
+
+  --wp-font-display: 'Inter', sans-serif;
+  --wp-font-body: 'Inter', sans-serif;
+  --wp-font-mono: 'JetBrains Mono', monospace;
+
+  --wp-bg: #0b1220;
+  --wp-bg-grad-1: rgba(16, 185, 129, 0.08);
+  --wp-bg-grad-2: rgba(139, 92, 246, 0.06);
+
+  --wp-surface-1: rgba(28, 40, 69, 0.55);
+  --wp-surface-1-hover: rgba(28, 40, 69, 0.85);
+  --wp-surface-2: rgba(28, 40, 69, 0.5);
+  --wp-surface-3: rgba(15, 23, 42, 0.75);
+  --wp-surface-modal: rgba(22, 32, 56, 0.98);
+
+  --wp-border: rgba(36, 49, 82, 0.7);
+  --wp-border-strong: rgba(77, 91, 133, 0.4);
+  --wp-border-divider: rgba(36, 49, 82, 0.6);
+
+  --wp-fg-primary: #e8ecf5;
+  --wp-fg-secondary: #cdd4e3;
+  --wp-fg-muted: #a8b2cc;
+  --wp-fg-dim: #7a86a8;
+  --wp-fg-faint: #4d5b85;
+
+  --wp-accent: #10b981;
+  --wp-accent-light: #34d399;
+  --wp-accent-soft: #6ee7b7;
+  --wp-accent-bg: rgba(16, 185, 129, 0.25);
+  --wp-accent-border: rgba(16, 185, 129, 0.5);
+
+  --wp-danger: #ef4444;
+  --wp-danger-bg: rgba(239, 68, 68, 0.25);
+  --wp-danger-border: rgba(239, 68, 68, 0.5);
+
+  --wp-warn: #f59e0b;
+  --wp-warn-bg: rgba(245, 158, 11, 0.25);
+  --wp-warn-border: rgba(245, 158, 11, 0.5);
+
+  --wp-shadow-card: 0 6px 24px rgba(16, 185, 129, 0.08);
+  --wp-shadow-modal: 0 24px 48px rgba(0, 0, 0, 0.5);
+
+  /* Place categories */
+  --wp-cat-food: #3b82f6;
+  --wp-cat-shopping: #8b5cf6;
+  --wp-cat-hotels: #10b981;
+  --wp-cat-culture: #60a5fa;
+  --wp-cat-sports: #34d399;
+  --wp-cat-airports: #f59e0b;
+  --wp-cat-other: #94a3b8;
+
+  /* Travel modes */
+  --wp-mode-walking: #34d399;
+  --wp-mode-driving: #3b82f6;
+  --wp-mode-flying: #8b5cf6;
+
+  /* Leaflet popup */
+  --wp-map-popup-bg: #16213a;
+  --wp-map-popup-fg: #e8ecf5;
+  --wp-map-popup-accent: #34d399;
+}
