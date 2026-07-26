@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import cities, day, insights, places, settings, trips, world
+from app.api import cities, day, events, insights, places, settings, trips, world
 from app.db import get_session, init_db
 from app.ingest import router as ingest_router
 from app.processing import process_all
@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Waypoint", version=__version__, lifespan=lifespan)
 
 app.include_router(ingest_router)
+app.include_router(events.router)
 app.include_router(day.router)
 app.include_router(trips.router)
 app.include_router(insights.router)

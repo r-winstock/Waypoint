@@ -7,9 +7,11 @@ import time
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models import Place
+from app.db import get_setting
+from app.models import Place, Visit
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
+NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 USER_AGENT = "Waypoint/0.1 (self-hosted personal timeline; contact rwinstock@hotmail.com)"
 
@@ -177,6 +179,105 @@ def _find_duplicate_place(session: Session, lat: float, lon: float, name: str | 
     return best
 
 
+# Wider than PLACE_DEDUP_RADIUS_M (which the automatic background dedup uses
+# conservatively) - this only ever surfaces candidates for a human to review
+# and explicitly opt into merging via the "Fix this place" modal's "also
+# apply to..." list, so a looser radius trading a few more false positives
+# for fewer missed real duplicates is the right way round for a user-driven
+# action.
+SIMILAR_PLACE_RADIUS_M = 2000.0
+
+
+def find_similar_places(session: Session, place: Place) -> list[dict]:
+    """Other Place rows sharing this place's current name+city within
+    SIMILAR_PLACE_RADIUS_M - candidates the user can choose to merge into
+    this one when correcting it (the same real place resolved to more than
+    one Place row, e.g. because they were more than PLACE_DEDUP_RADIUS_M
+    apart, or existed before that automatic dedup did)."""
+    if not place.name:
+        return []
+    box_deg = (SIMILAR_PLACE_RADIUS_M / 111_320) * 1.5
+    query = session.query(Place).filter(
+        Place.id != place.id,
+        Place.name == place.name,
+        Place.lat_round.between(place.lat_round - box_deg, place.lat_round + box_deg),
+        Place.lon_round.between(place.lon_round - box_deg, place.lon_round + box_deg),
+    )
+    query = query.filter(Place.city == place.city) if place.city is not None else query.filter(Place.city.is_(None))
+
+    out = []
+    for candidate in query.all():
+        distance = _haversine_m(place.lat_round, place.lon_round, candidate.lat_round, candidate.lon_round)
+        if distance > SIMILAR_PLACE_RADIUS_M:
+            continue
+        visit_count = session.query(Visit).filter(Visit.place_id == candidate.id).count()
+        out.append({"id": candidate.id, "name": candidate.name, "city": candidate.city, "distance_m": round(distance), "visit_count": visit_count})
+    out.sort(key=lambda r: r["distance_m"])
+    return out
+
+
+def merge_places_into(session: Session, canonical_id: int, other_place_ids: list[int]) -> int:
+    """Repoints every Visit from other_place_ids onto canonical_id and
+    deletes those now-orphaned Place rows. Shared by scripts/dedupe_places.py
+    (automatic, proximity-clustered) and the manual "also apply to..."
+    option on place correction (user-selected, explicit) - same operation,
+    different callers decide which place_ids to pass in."""
+    repointed = 0
+    for other_id in other_place_ids:
+        if other_id == canonical_id:
+            continue
+        repointed += (
+            session.query(Visit).filter(Visit.place_id == other_id).update({Visit.place_id: canonical_id})
+        )
+        other = session.get(Place, other_id)
+        if other is not None:
+            session.delete(other)
+    return repointed
+
+
+def create_or_reuse_place(
+    session: Session, lat: float, lon: float, name: str, category: str,
+    city: str | None, country: str | None, country_code: str | None,
+) -> Place:
+    """Get-or-create a Place from already-known fields (a search result the
+    user picked, or details they typed by hand) rather than reverse-geocoding
+    - used when converting a mis-classified travel segment into a visit
+    (see app/api/events.py), where the real place is already known and a
+    fresh Nominatim call would just be redundant. Still checks
+    _find_duplicate_place first so this doesn't create yet another
+    near-duplicate row for a place already resolved nearby."""
+    duplicate = _find_duplicate_place(session, lat, lon, name, city)
+    if duplicate is not None:
+        return duplicate
+
+    lat_r, lon_r = round(lat, ROUND_DP), round(lon, ROUND_DP)
+    place = Place(
+        lat_round=lat_r, lon_round=lon_r, name=name, category=category,
+        city=city, country=country, country_code=country_code,
+    )
+    session.add(place)
+    session.flush()
+    return place
+
+
+def _tag_home(session: Session, place: Place, lat: float, lon: float) -> None:
+    """Auto-labels a place as "Home" when it falls within the configured
+    home radius - the same setting _rebuild_trips already uses to decide
+    what counts as "away", so the app already knows where home is. Only
+    overrides the generic "Other places" fallback, and never a place the
+    user has corrected themselves or that OSM tags already gave a more
+    specific category."""
+    if place.manually_corrected or place.category != "Other places":
+        return
+    home_lat = get_setting(session, "home_lat", "")
+    home_lon = get_setting(session, "home_lon", "")
+    if not home_lat or not home_lon:
+        return
+    radius_m = float(get_setting(session, "home_radius_m", "500"))
+    if _haversine_m(lat, lon, float(home_lat), float(home_lon)) <= radius_m:
+        place.category = "Home"
+
+
 def _throttle() -> None:
     global _last_call
     wait = MIN_INTERVAL_S - (time.monotonic() - _last_call)
@@ -201,6 +302,7 @@ def resolve_place(
             session.query(Place).filter(Place.google_place_id == google_place_id).one_or_none()
         )
         if cached_by_id is not None:
+            _tag_home(session, cached_by_id, lat, lon)
             return cached_by_id
 
     lat_r, lon_r = round(lat, ROUND_DP), round(lon, ROUND_DP)
@@ -212,6 +314,7 @@ def resolve_place(
     if cached is not None:
         if google_place_id is not None and cached.google_place_id is None:
             cached.google_place_id = google_place_id
+        _tag_home(session, cached, lat, lon)
         return cached
 
     data = _reverse_geocode(lat, lon)
@@ -232,6 +335,7 @@ def resolve_place(
     if duplicate is not None:
         if google_place_id is not None and duplicate.google_place_id is None:
             duplicate.google_place_id = google_place_id
+        _tag_home(session, duplicate, lat, lon)
         return duplicate
 
     place = Place(
@@ -245,6 +349,7 @@ def resolve_place(
         country_code=country_code,
         raw_json=raw_json,
     )
+    _tag_home(session, place, lat, lon)
     session.add(place)
     session.flush()
     return place
@@ -263,3 +368,49 @@ def _reverse_geocode(lat: float, lon: float) -> dict | None:
         return resp.json()
     except (httpx.HTTPError, ValueError):
         return None
+
+
+def search_places(query: str, near_lat: float | None = None, near_lon: float | None = None, limit: int = 8) -> list[dict]:
+    """Free-text place search, for when the correct place isn't one of
+    find_nearby_places' OSM-tagged neighbours (e.g. it's real but Overpass's
+    radius/tagging missed it entirely) - the "Fix this place" modal's search
+    box. Biased toward near_lat/near_lon with a soft viewbox (bounded=0, so a
+    genuine match well outside it still comes back) since a corrected place
+    is overwhelmingly likely to be near where the visit actually happened;
+    only the label was wrong, not the location."""
+    if not query.strip():
+        return []
+
+    params = {"q": query, "format": "jsonv2", "addressdetails": 1, "limit": limit}
+    if near_lat is not None and near_lon is not None:
+        box_deg = 0.5  # ~55km soft bias box
+        params["viewbox"] = f"{near_lon - box_deg},{near_lat + box_deg},{near_lon + box_deg},{near_lat - box_deg}"
+        params["bounded"] = 0
+
+    _throttle()
+    try:
+        resp = httpx.get(NOMINATIM_SEARCH_URL, params=params, headers={"User-Agent": USER_AGENT}, timeout=10.0)
+        resp.raise_for_status()
+        results = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return []
+
+    out = []
+    for r in results:
+        address = r.get("address", {})
+        lat, lon = float(r["lat"]), float(r["lon"])
+        code = address.get("country_code")
+        out.append(
+            {
+                "name": r.get("name") or address.get("road") or r.get("display_name"),
+                "display_name": r.get("display_name"),
+                "category": _categorise(r.get("category"), r.get("type")),
+                "lat": lat,
+                "lon": lon,
+                "city": address.get("city") or address.get("town") or address.get("village") or address.get("municipality"),
+                "country": address.get("country"),
+                "country_code": code.upper() if code else None,
+                "distance_m": round(_haversine_m(near_lat, near_lon, lat, lon)) if near_lat is not None else None,
+            }
+        )
+    return out

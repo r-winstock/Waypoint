@@ -19,7 +19,10 @@ TREND_MONTHS = 6
 TRAVEL_MODE_ORDER = [
     "walking", "cycling", "driving", "taxi", "bus", "train", "subway", "tram", "ferry", "boating", "flying",
 ]
-VISIT_CATEGORIES = ["Food and drink", "Shopping", "Hotels", "Culture", "Sports", "Airports", "Other places"]
+# Same convention as TRAVEL_MODE_ORDER above - display order when present,
+# not an allow-list. Categories not listed here (e.g. a user-typed custom
+# category from a place correction) still appear, just after these.
+VISIT_CATEGORIES = ["Home", "Work", "Food and drink", "Shopping", "Hotels", "Culture", "Sports", "Airports", "Other places"]
 
 
 def _month_bounds(year: int, month: int) -> tuple[int, int]:
@@ -95,7 +98,9 @@ def get_insights(year: int, month: int, session: Session = Depends(db_dependency
         },
         "visits": {
             category: {"duration_s": visits.get(category, 0.0), "trend": visit_trend[category]}
-            for category in VISIT_CATEGORIES
-            if visits.get(category, 0.0) > 0 or sum(visit_trend[category]) > 0
+            for category in sorted(
+                set(visits) | {c for c, t in visit_trend.items() if sum(t) > 0},
+                key=lambda c: VISIT_CATEGORIES.index(c) if c in VISIT_CATEGORIES else len(VISIT_CATEGORIES),
+            )
         },
     }

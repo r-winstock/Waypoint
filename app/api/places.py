@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import db_dependency
-from app.geocoding import find_nearby_places
+from app.geocoding import find_nearby_places, find_similar_places, merge_places_into, search_places
 from app.models import Place, Visit
 
 router = APIRouter()
@@ -31,12 +31,46 @@ def get_nearby_alternatives(place_id: int, session: Session = Depends(db_depende
     return {"alternatives": find_nearby_places(place.lat_round, place.lon_round)}
 
 
+@router.get("/api/places/detail/{place_id}/similar")
+def get_similar_places(place_id: int, session: Session = Depends(db_dependency)):
+    """Other Place rows that look like the same real place as this one
+    (same current name+city, nearby) - candidates to fold into this one
+    when correcting it, e.g. two visits to the same office that ended up
+    with separate Place rows."""
+    place = session.get(Place, place_id)
+    if place is None:
+        raise HTTPException(status_code=404, detail="Place not found")
+    return {"similar": find_similar_places(session, place)}
+
+
+@router.get("/api/places/search")
+def search_place_by_name(
+    q: str,
+    place_id: int | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+    session: Session = Depends(db_dependency),
+):
+    """Free-text search for when the right place isn't among the nearby
+    OSM-tagged alternatives at all (e.g. Overpass's radius/tagging missed
+    it). Biased toward place_id's coordinates when given, else lat/lon
+    directly (e.g. converting a travel segment into a visit, where there's
+    no existing Place yet to bias from)."""
+    near_lat, near_lon = lat, lon
+    if place_id is not None:
+        place = session.get(Place, place_id)
+        if place is not None:
+            near_lat, near_lon = place.lat_round, place.lon_round
+    return {"results": search_places(q, near_lat, near_lon)}
+
+
 class PlaceCorrection(BaseModel):
     name: str
     category: str
     city: str | None = None
     country: str | None = None
     country_code: str | None = None
+    merge_place_ids: list[int] = []
 
 
 @router.put("/api/places/detail/{place_id}")
@@ -50,6 +84,7 @@ def correct_place(place_id: int, correction: PlaceCorrection, session: Session =
     place.country = correction.country
     place.country_code = correction.country_code.upper() if correction.country_code else None
     place.manually_corrected = True
+    merged_visits = merge_places_into(session, place_id, correction.merge_place_ids)
     session.commit()
     return {
         "id": place.id,
@@ -59,6 +94,7 @@ def correct_place(place_id: int, correction: PlaceCorrection, session: Session =
         "country": place.country,
         "country_code": place.country_code,
         "manually_corrected": place.manually_corrected,
+        "merged_visits": merged_visits,
     }
 
 

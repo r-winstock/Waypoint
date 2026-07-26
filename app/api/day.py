@@ -66,9 +66,12 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
             and v.start_ts - prev["end_ts"] <= VISIT_MERGE_MAX_GAP_S
         ):
             prev["end_ts"] = max(prev["end_ts"], v.end_ts)
+            prev["visit_ids"].append(v.id)
         else:
             coalesced_visits.append(
                 {
+                    "id": v.id,
+                    "visit_ids": [v.id],
                     "start_ts": v.start_ts,
                     "end_ts": v.end_ts,
                     "lat": v.lat,
@@ -86,6 +89,7 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
         timeline.append(
             {
                 "type": "segment",
+                "id": s.id,
                 "start_ts": s.start_ts,
                 "end_ts": s.end_ts,
                 "mode": s.mode,

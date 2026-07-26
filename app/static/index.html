@@ -93,11 +93,14 @@
           </template>
 
           <div>
-            <template x-for="entry in day.data.timeline" :key="entry.start_ts + entry.type">
+            <template x-for="entry in day.data.timeline" :key="entry.type + '-' + entry.id">
               <div class="day-row">
                 <div class="flex flex-col items-center">
-                  <div class="dot" :style="entry.type==='visit' ? '' : `background: var(--wp-mode-${entry.mode})`"></div>
-                  <div class="line" style="height: 28px"></div>
+                  <div class="timeline-badge" :style="entry.type==='visit' ? '' : `background: var(--wp-mode-${entry.mode}); border-color: var(--wp-mode-${entry.mode})`">
+                    <i x-show="entry.type==='segment'" :data-lucide="modeIcon(entry.mode)" class="w-3.5 h-3.5" style="color: white"></i>
+                    <span x-show="entry.type==='visit'" x-text="categoryIcon(entry.category)" style="font-size: 14px; line-height: 1"></span>
+                  </div>
+                  <div class="line" :style="`height: ${entryLineHeight(entry.start_ts, entry.end_ts)}px`"></div>
                 </div>
                 <div class="flex-1 pb-2">
                   <template x-if="entry.type==='visit'">
@@ -108,6 +111,13 @@
                                 @click="openPlaceEdit(entry.place_id, entry.place_name, entry.category, entry.city, null, null)">
                           <i data-lucide="pencil" class="w-3 h-3"></i>
                         </button>
+                        <button class="btn-icon" style="width: 24px; height: 24px" title="Merge into previous visit" x-show="canMergeUp(entry)"
+                                @click="mergeWithPrevious(entry)">
+                          <i data-lucide="git-merge" class="w-3 h-3"></i>
+                        </button>
+                        <button class="btn-icon" style="width: 24px; height: 24px" title="Delete this visit" @click="deleteVisit(entry)">
+                          <i data-lucide="trash-2" class="w-3 h-3"></i>
+                        </button>
                       </div>
                       <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTime(entry.start_ts) + ' – ' + formatTime(entry.end_ts)].filter(Boolean).join(' · ')"></div>
                       <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
@@ -115,7 +125,16 @@
                   </template>
                   <template x-if="entry.type==='segment'">
                     <div>
-                      <div class="font-medium capitalize" x-text="entry.mode"></div>
+                      <div class="flex items-center gap-2">
+                        <div class="font-medium capitalize" x-text="entry.mode"></div>
+                        <button class="btn-icon" style="width: 24px; height: 24px" title="This was actually a stop - convert to a visit"
+                                @click="openConvertSegment(entry)">
+                          <i data-lucide="map-pin-plus" class="w-3 h-3"></i>
+                        </button>
+                        <button class="btn-icon" style="width: 24px; height: 24px" title="Delete this segment" @click="deleteSegment(entry)">
+                          <i data-lucide="trash-2" class="w-3 h-3"></i>
+                        </button>
+                      </div>
                       <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatMiles(entry.distance_m) + ' · ' + formatDuration(entry.duration_s)"></div>
                     </div>
                   </template>
@@ -129,23 +148,73 @@
 
     <!-- ═══════════ TRIPS ═══════════ -->
     <div x-show="tab==='trips'">
-      <div id="trips-map-container" class="mb-5"></div>
-      <template x-if="trips.data">
+      <template x-if="!trips.detail && !trips.detailLoading">
         <div>
-          <div class="flex gap-6 mb-5">
-            <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.trip_count"></span> <span style="color: var(--wp-fg-muted)">trips</span></div>
-            <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.day_count"></span> <span style="color: var(--wp-fg-muted)">days</span></div>
-          </div>
-          <template x-if="!trips.data.trips.length">
-            <div class="empty-state">No trips detected yet — set a home location in Settings so Waypoint can tell when you're away.</div>
+          <div id="trips-map-container" class="mb-5"></div>
+          <template x-if="trips.data">
+            <div>
+              <div class="flex gap-6 mb-5">
+                <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.trip_count"></span> <span style="color: var(--wp-fg-muted)">trips</span></div>
+                <div><span class="text-2xl font-bold tabular" x-text="trips.data.totals.day_count"></span> <span style="color: var(--wp-fg-muted)">days</span></div>
+              </div>
+              <template x-if="!trips.data.trips.length">
+                <div class="empty-state">No trips detected yet — set a home location in Settings so Waypoint can tell when you're away.</div>
+              </template>
+              <div class="grid-cards">
+                <template x-for="t in trips.data.trips" :key="t.id">
+                  <div class="trip-card" @click="openTrip(t.id)">
+                    <div class="banner"><div class="title" x-text="t.primary_city || t.primary_country || 'Trip'"></div></div>
+                    <div class="body">
+                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatDateRange(t.start_ts, t.end_ts)"></div>
+                      <div class="text-sm mt-1" x-text="t.days + ' day' + (t.days > 1 ? 's' : '') + (t.primary_country ? ' · ' + t.primary_country : '')"></div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
           </template>
-          <div class="grid-cards">
-            <template x-for="t in trips.data.trips" :key="t.id">
-              <div class="trip-card">
-                <div class="banner"><div class="title" x-text="t.primary_city || t.primary_country || 'Trip'"></div></div>
-                <div class="body">
-                  <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatDateRange(t.start_ts, t.end_ts)"></div>
-                  <div class="text-sm mt-1" x-text="t.days + ' day' + (t.days > 1 ? 's' : '') + (t.primary_country ? ' · ' + t.primary_country : '')"></div>
+        </div>
+      </template>
+
+      <template x-if="trips.detailLoading">
+        <div class="empty-state">Loading trip…</div>
+      </template>
+
+      <template x-if="trips.detail">
+        <div>
+          <button class="nav-tab mb-3" @click="closeTrip()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to trips</button>
+          <div class="text-lg font-semibold display mb-1" x-text="trips.detail.primary_city || trips.detail.primary_country || 'Trip'"></div>
+          <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="formatDateRange(trips.detail.start_ts, trips.detail.end_ts) + ' · ' + trips.detail.days + ' day' + (trips.detail.days > 1 ? 's' : '')"></div>
+
+          <div id="trip-detail-map-container" class="mb-5"></div>
+
+          <template x-if="!trips.detail.timeline.length">
+            <div class="empty-state">No visit or travel data recorded for this trip.</div>
+          </template>
+          <div>
+            <template x-for="entry in trips.detail.timeline" :key="entry.type + '-' + entry.id">
+              <div class="day-row">
+                <div class="flex flex-col items-center">
+                  <div class="timeline-badge" :style="entry.type==='visit' ? '' : `background: var(--wp-mode-${entry.mode}); border-color: var(--wp-mode-${entry.mode})`">
+                    <i x-show="entry.type==='segment'" :data-lucide="modeIcon(entry.mode)" class="w-3.5 h-3.5" style="color: white"></i>
+                    <span x-show="entry.type==='visit'" x-text="categoryIcon(entry.category)" style="font-size: 14px; line-height: 1"></span>
+                  </div>
+                  <div class="line" :style="`height: ${entryLineHeight(entry.start_ts, entry.end_ts)}px`"></div>
+                </div>
+                <div class="flex-1 pb-2">
+                  <template x-if="entry.type==='visit'">
+                    <div>
+                      <div class="font-semibold" x-text="entry.place_name || 'Unnamed place'"></div>
+                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTime(entry.start_ts) + ' – ' + formatTime(entry.end_ts)].filter(Boolean).join(' · ')"></div>
+                      <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
+                    </div>
+                  </template>
+                  <template x-if="entry.type==='segment'">
+                    <div>
+                      <div class="font-medium capitalize" x-text="entry.mode"></div>
+                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatMiles(entry.distance_m) + ' · ' + formatDuration(entry.duration_s)"></div>
+                    </div>
+                  </template>
                 </div>
               </div>
             </template>
@@ -307,7 +376,7 @@
 
       <label class="field-label">Nearby alternatives</label>
       <div x-show="placeEdit.loadingAlternatives" class="text-sm mb-3" style="color: var(--wp-fg-muted)">Looking nearby…</div>
-      <div x-show="!placeEdit.loadingAlternatives && !placeEdit.alternatives.length" class="text-sm mb-3" style="color: var(--wp-fg-muted)">Nothing named found nearby — type the correct details above.</div>
+      <div x-show="!placeEdit.loadingAlternatives && !placeEdit.alternatives.length" class="text-sm mb-3" style="color: var(--wp-fg-muted)">Nothing named found nearby.</div>
       <div class="mb-3">
         <template x-for="alt in placeEdit.alternatives" :key="alt.osm_type + alt.osm_id">
           <button type="button" class="alt-option" @click="selectAlternative(alt)">
@@ -320,10 +389,87 @@
         </template>
       </div>
 
+      <label class="field-label">Can't find it nearby? Search by name</label>
+      <div class="flex gap-2 mb-2">
+        <input type="text" class="field-input" placeholder="e.g. The Kilmurry Lodge Hotel" x-model="placeEdit.searchQuery" @keydown.enter="searchPlaces()">
+        <button type="button" class="btn-ghost" :disabled="placeEdit.searching" @click="searchPlaces()">
+          <span x-text="placeEdit.searching ? 'Searching…' : 'Search'"></span>
+        </button>
+      </div>
+      <div class="mb-3">
+        <template x-for="result in placeEdit.searchResults" :key="result.display_name">
+          <button type="button" class="alt-option" @click="selectSearchResult(result)">
+            <div class="flex items-center justify-between">
+              <span x-text="result.name"></span>
+              <span class="text-xs" style="color: var(--wp-fg-dim)" x-show="result.distance_m != null" x-text="(result.distance_m/1000).toFixed(1) + ' km'"></span>
+            </div>
+            <div class="text-xs" style="color: var(--wp-fg-dim)" x-text="result.display_name"></div>
+          </button>
+        </template>
+      </div>
+
+      <template x-if="!placeEdit.loadingSimilar && placeEdit.similar.length">
+        <div class="mb-3">
+          <label class="field-label">Also apply to other places named the same nearby</label>
+          <template x-for="s in placeEdit.similar" :key="s.id">
+            <label class="alt-option flex items-center gap-2" style="cursor: pointer">
+              <input type="checkbox" :value="s.id" @change="toggleMerge(s.id)">
+              <span x-text="(s.city || 'Unknown') + ' · ' + s.visit_count + ' visit' + (s.visit_count > 1 ? 's' : '') + ' · ' + (s.distance_m/1000).toFixed(1) + ' km away'"></span>
+            </label>
+          </template>
+        </div>
+      </template>
+
       <div class="flex justify-end gap-2 mt-4">
         <button class="btn-ghost" @click="closePlaceEdit()">Cancel</button>
         <button class="btn-primary" :disabled="placeEdit.saving" @click="savePlaceEdit()">
-          <span x-text="placeEdit.saving ? 'Saving…' : 'Save'"></span>
+          <span x-text="placeEdit.saving ? 'Saving…' : (placeEdit.mergeIds.length ? `Save & merge ${placeEdit.mergeIds.length}` : 'Save')"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ CONVERT SEGMENT TO VISIT MODAL ═══════════ -->
+  <div class="modal-backdrop" x-show="segmentConvert.open" @click.self="closeConvertSegment()" style="display: none">
+    <div class="modal">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold display">This was actually a stop</h3>
+        <button class="btn-icon" @click="closeConvertSegment()"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+
+      <label class="field-label">Search for the place</label>
+      <div class="flex gap-2 mb-2">
+        <input type="text" class="field-input" placeholder="e.g. Iceland Supermarket" x-model="segmentConvert.searchQuery" @keydown.enter="searchConvertPlaces()">
+        <button type="button" class="btn-ghost" :disabled="segmentConvert.searching" @click="searchConvertPlaces()">
+          <span x-text="segmentConvert.searching ? 'Searching…' : 'Search'"></span>
+        </button>
+      </div>
+      <div class="mb-3">
+        <template x-for="result in segmentConvert.searchResults" :key="result.display_name">
+          <button type="button" class="alt-option" @click="selectConvertResult(result)">
+            <div class="flex items-center justify-between">
+              <span x-text="result.name"></span>
+              <span class="text-xs" style="color: var(--wp-fg-dim)" x-show="result.distance_m != null" x-text="(result.distance_m/1000).toFixed(1) + ' km'"></span>
+            </div>
+            <div class="text-xs" style="color: var(--wp-fg-dim)" x-text="result.display_name"></div>
+          </button>
+        </template>
+      </div>
+
+      <label class="field-label">Name</label>
+      <input type="text" class="field-input" x-model="segmentConvert.name">
+
+      <label class="field-label">Category</label>
+      <select class="field-input" x-model="segmentConvert.category">
+        <template x-for="opt in categoryOptions" :key="opt">
+          <option :value="opt" x-text="opt"></option>
+        </template>
+      </select>
+
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="btn-ghost" @click="closeConvertSegment()">Cancel</button>
+        <button class="btn-primary" :disabled="segmentConvert.saving" @click="saveConvertSegment()">
+          <span x-text="segmentConvert.saving ? 'Saving…' : 'Convert to visit'"></span>
         </button>
       </div>
     </div>
@@ -331,9 +477,24 @@
 </div>
 
 <script>
+  // Lucide only ever draws an icon once, at createIcons() time - any
+  // <i data-lucide="..."> Alpine adds afterwards (a new day's timeline rows,
+  // a newly-opened category, etc.) stays an empty element until createIcons()
+  // runs again. A MutationObserver-based retry was tried here and dropped -
+  // it depends on catching every DOM write in the right order relative to
+  // Alpine's own (deferred-script) render cycle, and in practice some
+  // batches of newly-inserted icons were still missed for reasons that
+  // didn't reproduce consistently enough to pin down. A plain poll sidesteps
+  // all of that: it doesn't care what triggered a new unconverted icon or
+  // when, it just periodically checks. The check itself is a single cheap
+  // querySelector, so polling far more often than actually needed still
+  // costs nothing meaningful in a personal, single-user app.
   document.addEventListener('DOMContentLoaded', () => {
-    if (window.lucide) lucide.createIcons();
-    document.body.addEventListener('click', () => setTimeout(() => window.lucide && lucide.createIcons(), 0));
+    if (!window.lucide) return;
+    lucide.createIcons();
+    setInterval(() => {
+      if (document.querySelector('i[data-lucide]')) lucide.createIcons();
+    }, 300);
   });
 </script>
 </body>

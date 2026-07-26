@@ -194,6 +194,8 @@ h1, h2, h3, .display {
 .pill-cat-sports           { background: color-mix(in srgb, var(--wp-cat-sports) 18%, transparent); color: var(--wp-cat-sports); border-color: var(--wp-cat-sports); }
 .pill-cat-airports         { background: color-mix(in srgb, var(--wp-cat-airports) 18%, transparent); color: var(--wp-cat-airports); border-color: var(--wp-cat-airports); }
 .pill-cat-other-places     { background: color-mix(in srgb, var(--wp-cat-other) 18%, transparent); color: var(--wp-cat-other); border-color: var(--wp-cat-other); }
+.pill-cat-home             { background: color-mix(in srgb, var(--wp-cat-home) 18%, transparent); color: var(--wp-cat-home); border-color: var(--wp-cat-home); }
+.pill-cat-work             { background: color-mix(in srgb, var(--wp-cat-work) 18%, transparent); color: var(--wp-cat-work); border-color: var(--wp-cat-work); }
 
 .pill-mode-walking  { background: color-mix(in srgb, var(--wp-mode-walking) 18%, transparent); color: var(--wp-mode-walking); border-color: var(--wp-mode-walking); }
 .pill-mode-cycling  { background: color-mix(in srgb, var(--wp-mode-cycling) 18%, transparent); color: var(--wp-mode-cycling); border-color: var(--wp-mode-cycling); }
@@ -257,14 +259,14 @@ h1, h2, h3, .display {
   display: flex; align-items: flex-start; gap: 12px;
   padding: 10px 4px;
 }
-.day-row .dot {
-  width: 10px; height: 10px; border-radius: 50%;
-  margin-top: 6px; flex-shrink: 0;
-  background: var(--wp-accent);
+.day-row .timeline-badge {
+  width: 26px; height: 26px; min-height: 26px; border-radius: 50%;
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--wp-surface-2); border: 2px solid var(--wp-accent);
 }
 .day-row .line {
   width: 1px; background: var(--wp-border);
-  flex-shrink: 0; align-self: stretch; margin: 2px 0 -10px 4.5px;
+  flex-shrink: 0; align-self: stretch; margin: 2px 0 -10px 12.5px;
 }
 
 /* ─── Trip cards ─── */
@@ -273,7 +275,9 @@ h1, h2, h3, .display {
   background: var(--wp-surface-1);
   border: 1px solid var(--wp-border);
   overflow: hidden;
+  cursor: pointer;
 }
+.trip-card:hover { background: var(--wp-surface-1-hover); }
 .trip-card .banner {
   height: 90px;
   background: linear-gradient(135deg, var(--wp-accent-bg), var(--wp-surface-3));

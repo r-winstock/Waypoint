@@ -10,7 +10,7 @@ function countryFlag(code) {
 
 function formatMiles(m) {
   const mi = m / 1609.344;
-  if (mi < 0.1) return '< 0.1 mi';
+  if (mi < 0.1) return '0 mi';
   return `${mi.toFixed(mi < 10 ? 1 : 0)} mi`;
 }
 
@@ -51,6 +51,8 @@ function todayIso() {
 }
 
 const CATEGORY_ICONS = {
+  'Home': '\u{1F3E0}',
+  'Work': '\u{1F4BC}',
   'Food and drink': '\u{1F374}',
   'Shopping': '\u{1F6CD}',
   'Hotels': '\u{1F6CF}',
@@ -62,6 +64,28 @@ const CATEGORY_ICONS = {
 
 const CATEGORY_OPTIONS = Object.keys(CATEGORY_ICONS);
 
+const MODE_ICONS = {
+  walking: 'footprints',
+  cycling: 'bike',
+  driving: 'car',
+  taxi: 'car-front',
+  bus: 'bus',
+  train: 'train-front',
+  subway: 'train-front',
+  tram: 'tram-front',
+  ferry: 'ship',
+  boating: 'sailboat',
+  flying: 'plane',
+};
+
+// Visual weight of a timeline row reflects how long it actually lasted -
+// sqrt-scaled so an 11-hour overnight stay doesn't push a 6-minute stop off
+// the bottom of the screen, while still reading as clearly longer.
+function entryLineHeight(startTs, endTs) {
+  const minutes = Math.max(1, (endTs - startTs) / 60);
+  return Math.min(160, Math.max(24, 16 + Math.sqrt(minutes) * 8));
+}
+
 function waypoint() {
   return {
     theme: localStorage.getItem('waypoint-theme') || 'atlas',
@@ -69,7 +93,7 @@ function waypoint() {
     tab: 'day',
 
     day: { date: todayIso(), data: null, loading: false, map: null },
-    trips: { data: null, loading: false, map: null },
+    trips: { data: null, loading: false, map: null, detail: null, detailLoading: false, detailMap: null },
     insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false },
     places: { data: null, loading: false, category: null, categoryData: null },
     cities: { data: null, loading: false },
@@ -78,8 +102,16 @@ function waypoint() {
     placeEdit: {
       open: false, placeId: null, name: '', category: 'Other places', city: '', country: '', countryCode: '',
       alternatives: [], loadingAlternatives: false, saving: false,
+      searchQuery: '', searchResults: [], searching: false,
+      similar: [], loadingSimilar: false, mergeIds: [],
     },
     categoryOptions: CATEGORY_OPTIONS,
+
+    segmentConvert: {
+      open: false, segmentId: null, lat: null, lon: null,
+      name: '', category: 'Other places', city: '', country: '', countryCode: '',
+      searchQuery: '', searchResults: [], searching: false, saving: false,
+    },
 
     // ─── formatters exposed to templates ───
     formatMiles,
@@ -90,6 +122,8 @@ function waypoint() {
     countryFlag,
     slugify,
     categoryIcon(cat) { return CATEGORY_ICONS[cat] || '\u{1F4CD}'; },
+    modeIcon(mode) { return MODE_ICONS[mode] || 'move'; },
+    entryLineHeight,
 
     init() {
       this.applyTheme(this.theme);
@@ -118,6 +152,7 @@ function waypoint() {
       this.$nextTick(() => {
         if (tab === 'day' && this.day.map) this.day.map.invalidateSize();
         if (tab === 'trips' && this.trips.map) this.trips.map.invalidateSize();
+        if (tab === 'trips' && this.trips.detailMap) this.trips.detailMap.invalidateSize();
       });
     },
 
@@ -170,6 +205,21 @@ function waypoint() {
         t.visits.map((v) => ({ lat: v.lat, lon: v.lon, label: `<b>${v.place_name || t.primary_city || 'Visit'}</b>` }))
       );
       wpRenderPins(this.trips.map, pins);
+    },
+    async openTrip(tripId) {
+      this.trips.detail = null;
+      this.trips.detailLoading = true;
+      try {
+        const res = await fetch(`/api/trips/${tripId}`);
+        this.trips.detail = await res.json();
+        this.$nextTick(() => this.renderTripDetailMap());
+      } catch (e) { console.error('Failed to load trip detail', e); }
+      finally { this.trips.detailLoading = false; }
+    },
+    closeTrip() { this.trips.detail = null; },
+    renderTripDetailMap() {
+      if (!this.trips.detailMap) this.trips.detailMap = wpInitMap('trip-detail-map-container');
+      wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline);
     },
 
     // ─── Insights ───
@@ -247,6 +297,8 @@ function waypoint() {
         open: true, placeId, name: name || '', category: category || 'Other places',
         city: city || '', country: country || '', countryCode: countryCode || '',
         alternatives: [], loadingAlternatives: true, saving: false,
+        searchQuery: '', searchResults: [], searching: false,
+        similar: [], loadingSimilar: true, mergeIds: [],
       };
       try {
         const res = await fetch(`/api/places/detail/${placeId}/nearby`);
@@ -254,6 +306,13 @@ function waypoint() {
         this.placeEdit.alternatives = data.alternatives || [];
       } catch (e) { console.error('Failed to load nearby alternatives', e); }
       finally { this.placeEdit.loadingAlternatives = false; }
+
+      try {
+        const res = await fetch(`/api/places/detail/${placeId}/similar`);
+        const data = await res.json();
+        this.placeEdit.similar = data.similar || [];
+      } catch (e) { console.error('Failed to load similar places', e); }
+      finally { this.placeEdit.loadingSimilar = false; }
     },
     selectAlternative(alt) {
       // City/country are left as-is: alternatives are all within ~100m of
@@ -262,11 +321,38 @@ function waypoint() {
       this.placeEdit.name = alt.name;
       this.placeEdit.category = alt.category;
     },
+    async searchPlaces() {
+      if (!this.placeEdit.searchQuery.trim()) return;
+      this.placeEdit.searching = true;
+      try {
+        const params = new URLSearchParams({ q: this.placeEdit.searchQuery, place_id: this.placeEdit.placeId });
+        const res = await fetch(`/api/places/search?${params}`);
+        const data = await res.json();
+        this.placeEdit.searchResults = data.results || [];
+      } catch (e) { console.error('Failed to search places', e); }
+      finally { this.placeEdit.searching = false; }
+    },
+    selectSearchResult(result) {
+      // Unlike nearby alternatives, a free-text search result could be
+      // anywhere - always take its city/country too, not just name/category.
+      this.placeEdit.name = result.name;
+      this.placeEdit.category = result.category;
+      this.placeEdit.city = result.city || '';
+      this.placeEdit.country = result.country || '';
+      this.placeEdit.countryCode = result.country_code || '';
+      this.placeEdit.searchResults = [];
+      this.placeEdit.searchQuery = '';
+    },
+    toggleMerge(id) {
+      const i = this.placeEdit.mergeIds.indexOf(id);
+      if (i === -1) this.placeEdit.mergeIds.push(id);
+      else this.placeEdit.mergeIds.splice(i, 1);
+    },
     closePlaceEdit() { this.placeEdit.open = false; },
     async savePlaceEdit() {
       this.placeEdit.saving = true;
       try {
-        await fetch(`/api/places/detail/${this.placeEdit.placeId}`, {
+        const res = await fetch(`/api/places/detail/${this.placeEdit.placeId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -275,9 +361,14 @@ function waypoint() {
             city: this.placeEdit.city || null,
             country: this.placeEdit.country || null,
             country_code: this.placeEdit.countryCode || null,
+            merge_place_ids: this.placeEdit.mergeIds,
           }),
         });
+        const data = await res.json();
         this.placeEdit.open = false;
+        if (data.merged_visits) {
+          console.log(`Merged ${this.placeEdit.mergeIds.length} place(s), repointed ${data.merged_visits} visit(s).`);
+        }
         await this.refreshCurrentTab();
       } catch (e) { console.error('Failed to save place correction', e); }
       finally { this.placeEdit.saving = false; }
@@ -289,6 +380,93 @@ function waypoint() {
       if (this.tab === 'places') return this.loadPlaces();
       if (this.tab === 'cities') return this.loadCities();
       if (this.tab === 'world') return this.loadWorld();
+    },
+
+    // ─── Timeline event editing ───
+    // "Undo" here just means re-fetching the day - nothing is soft-deleted.
+    async deleteVisit(entry) {
+      if (!confirm(`Delete this visit (${entry.place_name || 'unnamed place'})? This can't be undone.`)) return;
+      await Promise.all(entry.visit_ids.map((id) => fetch(`/api/events/visits/${id}`, { method: 'DELETE' })));
+      await this.loadDay();
+    },
+    async deleteSegment(entry) {
+      if (!confirm(`Delete this ${entry.mode} segment? This can't be undone.`)) return;
+      await fetch(`/api/events/segments/${entry.id}`, { method: 'DELETE' });
+      await this.loadDay();
+    },
+    canMergeUp(entry) {
+      const visitEntries = this.day.data.timeline.filter((e) => e.type === 'visit');
+      return visitEntries.indexOf(entry) > 0;
+    },
+    async mergeWithPrevious(entry) {
+      if (!confirm(`Merge this visit into the previous one? This can't be undone.`)) return;
+      await fetch(`/api/events/visits/${entry.visit_ids[0]}/merge-with-previous`, { method: 'POST' });
+      await this.loadDay();
+    },
+    // Segment-to-visit conversion doesn't have a real coordinate of its own
+    // (TripSegment stores distance/duration, not lat/lon) - approximates
+    // with the midpoint of the visits either side, close enough for a search
+    // bias and for placing the resulting Visit marker on the map.
+    segmentMidpoint(entry) {
+      const timeline = this.day.data.timeline;
+      const idx = timeline.indexOf(entry);
+      const prev = [...timeline.slice(0, idx)].reverse().find((e) => e.type === 'visit');
+      const next = timeline.slice(idx + 1).find((e) => e.type === 'visit');
+      if (!prev || !next) return null;
+      return { lat: (prev.lat + next.lat) / 2, lon: (prev.lon + next.lon) / 2 };
+    },
+    openConvertSegment(entry) {
+      const mid = this.segmentMidpoint(entry);
+      if (!mid) { alert("Can't convert this segment - no visit on both sides to place it near."); return; }
+      this.segmentConvert = {
+        open: true, segmentId: entry.id, lat: mid.lat, lon: mid.lon,
+        name: '', category: 'Other places', city: '', country: '', countryCode: '',
+        searchQuery: '', searchResults: [], searching: false, saving: false,
+      };
+    },
+    closeConvertSegment() { this.segmentConvert.open = false; },
+    async searchConvertPlaces() {
+      if (!this.segmentConvert.searchQuery.trim()) return;
+      this.segmentConvert.searching = true;
+      try {
+        const params = new URLSearchParams({
+          q: this.segmentConvert.searchQuery, lat: this.segmentConvert.lat, lon: this.segmentConvert.lon,
+        });
+        const res = await fetch(`/api/places/search?${params}`);
+        const data = await res.json();
+        this.segmentConvert.searchResults = data.results || [];
+      } catch (e) { console.error('Failed to search places', e); }
+      finally { this.segmentConvert.searching = false; }
+    },
+    selectConvertResult(result) {
+      this.segmentConvert.name = result.name;
+      this.segmentConvert.category = result.category;
+      this.segmentConvert.city = result.city || '';
+      this.segmentConvert.country = result.country || '';
+      this.segmentConvert.countryCode = result.country_code || '';
+      this.segmentConvert.lat = result.lat;
+      this.segmentConvert.lon = result.lon;
+      this.segmentConvert.searchResults = [];
+      this.segmentConvert.searchQuery = '';
+    },
+    async saveConvertSegment() {
+      if (!this.segmentConvert.name.trim()) { alert('Give the place a name first.'); return; }
+      this.segmentConvert.saving = true;
+      try {
+        await fetch(`/api/events/segments/${this.segmentConvert.segmentId}/convert-to-visit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: this.segmentConvert.lat, lon: this.segmentConvert.lon,
+            name: this.segmentConvert.name, category: this.segmentConvert.category,
+            city: this.segmentConvert.city || null, country: this.segmentConvert.country || null,
+            country_code: this.segmentConvert.countryCode || null,
+          }),
+        });
+        this.segmentConvert.open = false;
+        await this.loadDay();
+      } catch (e) { console.error('Failed to convert segment', e); }
+      finally { this.segmentConvert.saving = false; }
     },
   };
 }
