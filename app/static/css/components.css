@@ -290,7 +290,12 @@ h1, h2, h3, .display {
 .empty-state { text-align: center; padding: 60px 20px; color: var(--wp-fg-muted); }
 
 /* ─── Map ─── */
-#map-container { height: 320px; border-radius: var(--wp-radius-card); border: 1px solid var(--wp-border); overflow: hidden; }
+/* Leaflet needs an explicit height on its container or it collapses to 0 and
+   never renders - only #map-container (Day view) ever had one; the Trips
+   overview map and the Trip detail map shared no rule at all. */
+#map-container, #trips-map-container, #trip-detail-map-container {
+  height: 320px; border-radius: var(--wp-radius-card); border: 1px solid var(--wp-border); overflow: hidden;
+}
 .leaflet-popup-content-wrapper { background: var(--wp-map-popup-bg); color: var(--wp-map-popup-fg); border-radius: 8px; }
 .leaflet-popup-content { font-family: var(--wp-font-body); font-size: 13px; }
 .leaflet-popup-content b { font-family: var(--wp-font-display); font-weight: 400; color: var(--wp-map-popup-accent); }
