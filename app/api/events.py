@@ -11,6 +11,33 @@ from app.models import TripSegment, Visit
 
 router = APIRouter()
 
+# Mirrors TripSegment.mode's docstring in models.py - kept as an explicit
+# allowlist rather than trusting arbitrary client input straight into the
+# column, since this is the only write path for mode that isn't derived by
+# the processing/import pipelines themselves.
+VALID_MODES = {
+    "walking", "cycling", "driving", "taxi", "bus", "train", "subway", "tram", "ferry", "boating", "flying",
+}
+
+
+class UpdateSegmentMode(BaseModel):
+    mode: str
+
+
+@router.patch("/api/events/segments/{segment_id}")
+def update_segment_mode(segment_id: int, body: UpdateSegmentMode, session: Session = Depends(db_dependency)):
+    """Lets a segment be reclassified (e.g. speed-classified "driving" was
+    actually a taxi) - GPS speed alone can't tell these apart, so this is
+    the only way to correct it once the visit either side is confirmed."""
+    if body.mode not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"mode must be one of {sorted(VALID_MODES)}")
+    segment = session.get(TripSegment, segment_id)
+    if segment is None:
+        raise HTTPException(status_code=404, detail="Segment not found")
+    segment.mode = body.mode
+    session.commit()
+    return {"id": segment.id, "mode": segment.mode}
+
 
 @router.delete("/api/events/visits/{visit_id}")
 def delete_visit(visit_id: int, session: Session = Depends(db_dependency)):

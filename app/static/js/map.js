@@ -62,10 +62,13 @@ function wpCategoryDivIcon(category) {
 // brown against its own parchment map tiles and accent colour) - a wider
 // white casing underneath, standard road-map cartography, guarantees
 // contrast regardless of the line colour or the theme/tile underneath.
+// Weight/opacity bumped up from the first attempt at this (3+4, 0.9) -
+// confirmed live that was still too thin/faint to read clearly against busy
+// satellite imagery.
 function wpCasedPolyline(latlngs, color, opts = {}) {
   const group = L.layerGroup();
-  L.polyline(latlngs, { color: '#ffffff', weight: (opts.weight || 3) + 4, opacity: 0.9, dashArray: opts.dashArray }).addTo(group);
-  L.polyline(latlngs, { color, weight: opts.weight || 3, opacity: opts.opacity ?? 0.95, dashArray: opts.dashArray }).addTo(group);
+  L.polyline(latlngs, { color: '#ffffff', weight: (opts.weight || 4) + 6, opacity: 1, dashArray: opts.dashArray }).addTo(group);
+  L.polyline(latlngs, { color, weight: opts.weight || 4, opacity: opts.opacity ?? 0.95, dashArray: opts.dashArray }).addTo(group);
   return group;
 }
 
@@ -113,6 +116,25 @@ async function wpFetchRoute(mode, fromLat, fromLon, toLat, toLon) {
   }
 }
 
+// train/subway/tram have no OSRM equivalent (no free public router does
+// timetabled/rail routing) - these are snapped server-side instead, against
+// OSM railway data via Overpass, and cached per-segment since that query is
+// heavier and more rate-limited than a per-render OSRM call. See
+// app/routing.py and GET /api/routing/segment/{id}.
+const RAIL_MODES = new Set(['train', 'subway', 'tram']);
+
+async function wpFetchRailRoute(segmentId, fromLat, fromLon, toLat, toLon) {
+  try {
+    const params = new URLSearchParams({ from_lat: fromLat, from_lon: fromLon, to_lat: toLat, to_lon: toLon });
+    const res = await fetch(`/api/routing/segment/${segmentId}?${params}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.points;
+  } catch (e) {
+    return null;
+  }
+}
+
 // Raw OwnTracks points already give a real GPS-traced path - only draws a
 // synthesized route for the stretch between two visits when no raw points
 // cover that time range (i.e. imported history, which has visits/segments
@@ -142,11 +164,20 @@ async function wpRenderDayMap(map, points, timeline) {
   // on a day with a single visit and zero segments - confirmed live, and
   // actively misleading since it doesn't correspond to anything in the
   // visit/segment list below it.
+  //
+  // Colour is the segment's own mode colour, not a fixed blue - a hardcoded
+  // colour here ignored the theme entirely and, worse, was the exact same
+  // hue as open water on both the standard and satellite tile sets, so a
+  // recorded boat/ferry crossing (which is almost always raw-GPS-covered,
+  // unlike a synthesised inter-visit leg) became invisible against the lake/
+  // sea it crossed. Recorded-vs-estimated is now conveyed by line style
+  // (solid here, dashed below) rather than colour, so colour is free to
+  // just mean "mode" consistently everywhere on the map.
   for (const seg of segments) {
     const legPoints = points.filter((p) => p.tst >= seg.start_ts && p.tst <= seg.end_ts);
     if (legPoints.length < 2) continue;
     const latlngs = legPoints.map((p) => [p.lat, p.lon]);
-    wpAddLayer(map, wpCasedPolyline(latlngs, '#3b82f6', { opacity: 0.75 }));
+    wpAddLayer(map, wpCasedPolyline(latlngs, wpModeColor(seg.mode), { opacity: 0.9 }));
     bounds.push(...latlngs);
   }
 
@@ -172,12 +203,17 @@ async function wpRenderDayMap(map, points, timeline) {
     const straight = [[prevVisit.lat, prevVisit.lon], [nextVisit.lat, nextVisit.lon]];
     const line = wpAddLayer(map, wpCasedPolyline(straight, color, { opacity: 0.7, dashArray: '6 6' }));
 
-    const routed = await wpFetchRoute(entry.mode, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon);
+    const routed = RAIL_MODES.has(entry.mode)
+      ? await wpFetchRailRoute(entry.id, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon)
+      : await wpFetchRoute(entry.mode, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon);
     if (renderToken !== _wpDayMapRenderToken) return; // superseded by a newer render
     if (routed) {
       map.removeLayer(line);
       map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
-      wpAddLayer(map, wpCasedPolyline(routed, color));
+      // Still dashed, even snapped to real roads - it's a router's guess at
+      // the path taken, not something GPS actually recorded, and the dash
+      // is the only remaining signal for that now colour is mode-only.
+      wpAddLayer(map, wpCasedPolyline(routed, color, { dashArray: '4 8' }));
     }
   }
 

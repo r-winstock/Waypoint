@@ -11,13 +11,17 @@ router = APIRouter()
 
 
 @router.get("/api/images")
-def get_image(q: str, geo: bool = False, fallback: str | None = None, session: Session = Depends(db_dependency)):
+def get_image(
+    q: str, geo: bool = False, fallback: str | None = None, hint: str | None = None,
+    session: Session = Depends(db_dependency),
+):
     """fallback covers e.g. a specific business with no Wikipedia page of
     its own (most of them) - falls back to a photo of its city rather than
     showing nothing, without ever accepting an implausible match for q
     itself (see _plausible_match). fallback is always treated as geo=True -
-    it's only ever passed a city name."""
-    cached = get_or_fetch_image(session, q, geo=geo)
+    it's only ever passed a city name. hint is a disambiguator (see
+    get_or_fetch_image) - a country name for a city/trip query."""
+    cached = get_or_fetch_image(session, q, geo=geo, hint=hint)
     if not cached.found and fallback and fallback != q:
         cached = get_or_fetch_image(session, fallback, geo=True)
     session.commit()
@@ -27,7 +31,7 @@ def get_image(q: str, geo: bool = False, fallback: str | None = None, session: S
 
 
 @router.post("/api/images/refresh")
-def refresh_image(q: str, geo: bool = False, session: Session = Depends(db_dependency)):
-    cached = get_or_fetch_image(session, q, force=True, geo=geo)
+def refresh_image(q: str, geo: bool = False, hint: str | None = None, session: Session = Depends(db_dependency)):
+    cached = get_or_fetch_image(session, q, force=True, geo=geo, hint=hint)
     session.commit()
     return {"found": cached.found}

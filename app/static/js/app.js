@@ -140,19 +140,25 @@ function waypoint() {
     // strictly than an arbitrary business/place name (Wikipedia's search
     // matched "Reading" to its article on the activity of reading, not the
     // town, since that's a real page title match on word overlap alone).
-    imageUrl(query, fallback, geo) {
+    // hint is an optional disambiguator (a country name, for a city/trip
+    // query) - biases the search toward e.g. "Windsor, United Kingdom" over
+    // Windsor, Ontario or the House of Windsor, all of which a bare
+    // "Windsor" search can plausibly match. See app/images.py.
+    imageUrl(query, fallback, geo, hint) {
       if (!query) return '';
       const v = this.imageCacheBust[query] || 0;
       const params = new URLSearchParams({ q: query, v });
       if (geo) params.set('geo', 'true');
       if (fallback && fallback !== query) params.set('fallback', fallback);
+      if (hint && hint !== query) params.set('hint', hint);
       return `/api/images?${params}`;
     },
-    async refreshCardImage(query, geo) {
+    async refreshCardImage(query, geo, hint) {
       if (!query) return;
       try {
         const params = new URLSearchParams({ q: query });
         if (geo) params.set('geo', 'true');
+        if (hint && hint !== query) params.set('hint', hint);
         await fetch(`/api/images/refresh?${params}`, { method: 'POST' });
       } catch (e) { console.error('Failed to refresh image', e); }
       this.imageCacheBust[query] = (this.imageCacheBust[query] || 0) + 1;
@@ -162,6 +168,34 @@ function waypoint() {
       this.applyTheme(this.theme);
       this.loadDay();
       this.loadDayOverview();
+      // Opening a Trip/City/Country/category detail pushes a history entry
+      // (see pushDetailState) purely so the browser's own Back button has
+      // something of ours to pop first - without it, Back left the whole
+      // app entirely and went to whatever page was open before Waypoint,
+      // confirmed live as surprising ("shouldn't Back just return me to the
+      // city list?"). The in-app "Back to X" buttons call history.back()
+      // too now, so both paths go through this one place.
+      window.addEventListener('popstate', () => this.closeAllDetails());
+    },
+    pushDetailState() {
+      history.pushState({ wpDetail: true }, '');
+    },
+    closeAllDetails() {
+      // Detail maps must be torn down here, not just have their container
+      // div disappear - the div is destroyed/recreated by Alpine's x-if
+      // every time (unlike x-show), but the Leaflet instance itself lived on
+      // in trips.detailMap/etc, so re-opening a second city (or trip, or
+      // country) reused a map bound to a DOM node that no longer existed
+      // instead of creating a fresh one for the new container. Confirmed
+      // live: a City detail opened a second time showed no map at all.
+      if (this.trips.detailMap) { this.trips.detailMap.remove(); this.trips.detailMap = null; }
+      if (this.cities.detailMap) { this.cities.detailMap.remove(); this.cities.detailMap = null; }
+      if (this.world.detailMap) { this.world.detailMap.remove(); this.world.detailMap = null; }
+      this.trips.detail = null;
+      this.cities.detail = null;
+      this.world.detail = null;
+      this.places.category = null;
+      this.places.categoryData = null;
     },
 
     setTheme(t) {
@@ -220,23 +254,124 @@ function waypoint() {
         this.day.overview = await res.json();
       } catch (e) { console.error('Failed to load day overview', e); }
     },
-    goToYear(year) {
-      const y = this.day.overview.years.find((entry) => entry.year === year);
-      if (!y) return;
-      // Jump to the first day WITH data that year, not always 1 January -
-      // history from an import can start mid-year (e.g. the KML import's
-      // earliest years only cover a couple of trips, not January).
-      this.day.date = new Date(y.min_ts * 1000).toISOString().slice(0, 10);
-      this.loadDay();
+    // ─── Day history chart (replaces an earlier, cramped year-strip) ───
+    // A monthly density chart across all recorded history - drag or click
+    // anywhere to jump the Day view to that month, per Richard's explicit
+    // choice of "build the full Emby History-style chart" over a bigger
+    // year-strip or dropping it entirely.
+    chartHover: null, // {x, month} - current playhead position while hovering/dragging
+    chartDragging: false,
+    chartMonths() {
+      return (this.day.overview && this.day.overview.months) || [];
     },
-    yearBarHeights() {
-      if (!this.day.overview) return [];
-      const max = Math.max(1, ...this.day.overview.years.map((y) => y.visit_count));
-      return this.day.overview.years.map((y) => ({
-        year: y.year,
-        height: Math.max(4, Math.round((y.visit_count / max) * 32)),
-        active: new Date(this.day.date).getFullYear() === y.year,
-      }));
+    chartMax() {
+      return Math.max(1, ...this.chartMonths().map((m) => m.visit_count));
+    },
+    // x runs 0-1000 (the SVG viewBox width) regardless of how many months
+    // there are - keeps every coordinate helper below in the same units.
+    chartX(index) {
+      const n = this.chartMonths().length;
+      return n > 1 ? (index / (n - 1)) * 1000 : 500;
+    },
+    chartY(count) {
+      return 180 - (count / this.chartMax()) * 160;
+    },
+    chartAreaPath() {
+      const months = this.chartMonths();
+      if (!months.length) return '';
+      const top = months.map((m, i) => `${this.chartX(i).toFixed(1)},${this.chartY(m.visit_count).toFixed(1)}`).join(' L ');
+      return `M ${this.chartX(0).toFixed(1)},180 L ${top} L ${this.chartX(months.length - 1).toFixed(1)},180 Z`;
+    },
+    chartLinePath() {
+      return this.chartMonths()
+        .map((m, i) => `${i === 0 ? 'M' : 'L'} ${this.chartX(i).toFixed(1)},${this.chartY(m.visit_count).toFixed(1)}`)
+        .join(' ');
+    },
+    chartPeakMonth() {
+      const months = this.chartMonths();
+      if (!months.length) return null;
+      return months.reduce((a, b) => (b.visit_count > a.visit_count ? b : a), months[0]);
+    },
+    chartPeakPoint() {
+      const months = this.chartMonths();
+      const peak = this.chartPeakMonth();
+      if (!peak || !peak.visit_count) return null;
+      const idx = months.indexOf(peak);
+      return { x: this.chartX(idx), y: this.chartY(peak.visit_count), month: peak };
+    },
+    // A tick per calendar year, thinned out once there'd be more than
+    // ~10-14 labels crowding the axis (11+ years of history is common here).
+    chartYearTicks() {
+      const months = this.chartMonths();
+      const ticks = [];
+      let lastYear = null;
+      months.forEach((m, i) => {
+        const year = m.month.slice(0, 4);
+        if (year !== lastYear) {
+          ticks.push({ x: this.chartX(i), label: year });
+          lastYear = year;
+        }
+      });
+      if (ticks.length > 14) {
+        const step = Math.ceil(ticks.length / 10);
+        return ticks.filter((_, i) => i % step === 0);
+      }
+      return ticks;
+    },
+    chartStats() {
+      const months = this.chartMonths();
+      return {
+        totalVisits: months.reduce((sum, m) => sum + m.visit_count, 0),
+        activeMonths: months.filter((m) => m.visit_count > 0).length,
+        firstMonth: months[0] || null,
+        lastMonth: months[months.length - 1] || null,
+        peak: this.chartPeakMonth(),
+      };
+    },
+    // Named distinctly from the Insights tab's own monthLabel() (no args,
+    // formats this.insights.year/month) - both were plain object-literal
+    // methods with the same name, so the later one silently won for every
+    // caller regardless of which was intended. Confirmed live: the chart's
+    // peak/stat labels all showed "July 2026" (today, via the Insights
+    // method's default state) no matter which month was actually peak.
+    chartMonthLabel(monthStr) {
+      const [y, m] = monthStr.split('-').map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+    },
+    // Pointer position -> nearest month, shared by click and drag.
+    chartMonthAtEvent(evt) {
+      const svg = evt.currentTarget.closest('svg');
+      const rect = svg.getBoundingClientRect();
+      const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+      const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      const months = this.chartMonths();
+      return months[Math.round(frac * (months.length - 1))] || null;
+    },
+    chartPointerDown(evt) {
+      this.chartDragging = true;
+      this.chartPointerMove(evt);
+    },
+    chartPointerMove(evt) {
+      const month = this.chartMonthAtEvent(evt);
+      if (!month) return;
+      const idx = this.chartMonths().indexOf(month);
+      this.chartHover = { x: this.chartX(idx), month };
+      if (this.chartDragging) this.goToMonth(month);
+    },
+    chartPointerUp() {
+      this.chartDragging = false;
+    },
+    chartPointerLeave() {
+      if (!this.chartDragging) this.chartHover = null;
+    },
+    goToMonth(month) {
+      // A zero-visit (gap-filled) month has no real date to jump to - the
+      // playhead can still track the pointer over it, it just doesn't drag
+      // the Day view along until it reaches a month that has data, the same
+      // way a video scrubber can't seek into a stretch with no footage.
+      if (!month || !month.min_ts) return;
+      this.day.date = new Date(month.min_ts * 1000).toISOString().slice(0, 10);
+      this.loadDay();
     },
     renderDayMap() {
       if (!this.day.map) this.day.map = wpInitMap('map-container');
@@ -284,6 +419,7 @@ function waypoint() {
       wpRenderPins(this.trips.map, pins);
     },
     async openTrip(tripId) {
+      this.pushDetailState();
       this.trips.detail = null;
       this.trips.detailLoading = true;
       try {
@@ -293,7 +429,6 @@ function waypoint() {
       } catch (e) { console.error('Failed to load trip detail', e); }
       finally { this.trips.detailLoading = false; }
     },
-    closeTrip() { this.trips.detail = null; },
     renderTripDetailMap() {
       if (!this.trips.detailMap) this.trips.detailMap = wpInitMap('trip-detail-map-container');
       wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline);
@@ -335,12 +470,12 @@ function waypoint() {
       finally { this.places.loading = false; }
     },
     async openCategory(cat) {
+      this.pushDetailState();
       this.places.category = cat;
       this.places.categoryData = null;
       const res = await fetch(`/api/places/${encodeURIComponent(cat)}`);
       this.places.categoryData = await res.json();
     },
-    closeCategory() { this.places.category = null; this.places.categoryData = null; },
     placeVisits: {},
     async togglePlaceVisits(placeId) {
       if (this.placeVisits[placeId]) {
@@ -366,6 +501,7 @@ function waypoint() {
     },
     async openCity(cityName) {
       if (!cityName) return;
+      this.pushDetailState();
       this.cities.detail = null;
       this.cities.detailLoading = true;
       try {
@@ -375,7 +511,6 @@ function waypoint() {
       } catch (e) { console.error('Failed to load city detail', e); }
       finally { this.cities.detailLoading = false; }
     },
-    closeCity() { this.cities.detail = null; },
     renderCityMap() {
       if (!this.cities.detailMap) this.cities.detailMap = wpInitMap('city-detail-map-container');
       const pins = this.cities.detail.places.map((p) => ({
@@ -402,6 +537,7 @@ function waypoint() {
     },
     async openCountry(countryCode) {
       if (!countryCode) return;
+      this.pushDetailState();
       this.world.detail = null;
       this.world.detailLoading = true;
       try {
@@ -411,7 +547,6 @@ function waypoint() {
       } catch (e) { console.error('Failed to load country detail', e); }
       finally { this.world.detailLoading = false; }
     },
-    closeCountry() { this.world.detail = null; },
     renderCountryMap() {
       if (!this.world.detailMap) this.world.detailMap = wpInitMap('country-detail-map-container');
       const pins = this.world.detail.pins.map((p) => ({
@@ -529,6 +664,20 @@ function waypoint() {
       if (!confirm(`Delete this ${entry.mode} segment? This can't be undone.`)) return;
       await fetch(`/api/events/segments/${entry.id}`, { method: 'DELETE' });
       await this.loadDay();
+    },
+    // Speed alone can't tell a taxi from a car, or a tram from a train - this
+    // is the only way to correct the classifier's best guess once you know
+    // better.
+    async updateSegmentMode(entry, mode) {
+      if (!mode || mode === entry.mode) return;
+      try {
+        await fetch(`/api/events/segments/${entry.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        });
+        await this.loadDay();
+      } catch (e) { console.error('Failed to update segment mode', e); }
     },
     canMergeUp(entry) {
       const visitEntries = this.day.data.timeline.filter((e) => e.type === 'visit');

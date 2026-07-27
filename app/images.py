@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
@@ -65,26 +66,40 @@ def _plausible_match(query: str, title: str) -> bool:
     return bool(query_words & title_words)
 
 
-def _wikipedia_search_title(query: str) -> str | None:
+def _wikipedia_search_titles(query: str, limit: int = 6) -> list[str]:
+    """Up to `limit` plausible candidate titles, in Wikipedia's own relevance
+    order - not just the top hit. Searched as intitle:{query} rather than a
+    bare full-text search - confirmed live that a bare search for a common
+    place name ranks the disambiguation page and loosely-related content
+    (e.g. "House of Windsor") above the real settlement article, whereas
+    intitle: (restricted to titles that actually contain the query word)
+    consistently surfaces the real "Place, Region" variants near the top
+    (e.g. "Windsor, Berkshire", "Split, Croatia")."""
     _throttle()
     try:
         resp = httpx.get(
             WIKIPEDIA_SEARCH_URL,
-            params={"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 1},
+            params={
+                "action": "query", "list": "search", "format": "json", "srlimit": limit,
+                "srsearch": f"intitle:{query}",
+            },
             headers={"User-Agent": USER_AGENT},
             timeout=10.0,
         )
         resp.raise_for_status()
         results = resp.json().get("query", {}).get("search", [])
-        if not results:
-            return None
-        title = results[0]["title"]
-        return title if _plausible_match(query, title) else None
+        return [r["title"] for r in results if _plausible_match(query, r["title"])]
     except (httpx.HTTPError, ValueError, KeyError, IndexError):
-        return None
+        return []
 
 
-def _wikipedia_lead_image(title: str, require_coordinates: bool = False) -> str | None:
+@dataclass
+class WikiPage:
+    image_url: str
+    description: str
+
+
+def _wikipedia_page_info(title: str, require_coordinates: bool = False) -> WikiPage | None:
     """require_coordinates=True is for queries that are always a real place
     (a Trip/City lookup, or a Place's city fallback) - Wikipedia's search is
     a full-text match, not a lookup, and a bare common-word place name like
@@ -93,7 +108,9 @@ def _wikipedia_lead_image(title: str, require_coordinates: bool = False) -> str 
     word-overlap alone. A genuine populated-place article always carries
     coordinates in its infobox; requiring them here rejects that whole
     class of wrong match without needing to guess which words are "really"
-    place names."""
+    place names. description ("City in Apulia, Italy") lets the caller
+    prefer a candidate matching a disambiguation hint over an earlier-ranked
+    one that doesn't."""
     _throttle()
     try:
         resp = httpx.get(
@@ -104,9 +121,18 @@ def _wikipedia_lead_image(title: str, require_coordinates: bool = False) -> str 
         if resp.status_code != 200:
             return None
         data = resp.json()
+        # A disambiguation page ("Split", "Windsor" as bare titles) never has
+        # a meaningful lead image of its own regardless of query type - reject
+        # it outright rather than only via the require_coordinates check,
+        # which non-geo queries don't apply.
+        if data.get("type") == "disambiguation":
+            return None
         if require_coordinates and "coordinates" not in data:
             return None
-        return (data.get("originalimage") or {}).get("source") or (data.get("thumbnail") or {}).get("source")
+        image_url = (data.get("originalimage") or {}).get("source") or (data.get("thumbnail") or {}).get("source")
+        if not image_url:
+            return None
+        return WikiPage(image_url=image_url, description=data.get("description") or "")
     except (httpx.HTTPError, ValueError):
         return None
 
@@ -126,19 +152,40 @@ def _download_image(url: str, key: str) -> str | None:
     return str(path)
 
 
-def get_or_fetch_image(session: Session, query: str, force: bool = False, geo: bool = False) -> CachedImage:
+def get_or_fetch_image(
+    session: Session, query: str, force: bool = False, geo: bool = False, hint: str | None = None
+) -> CachedImage:
     """Get-or-create a cached image for this query. force=True re-attempts
     the fetch even over a previously cached result (the "refresh" action).
     geo=True asserts this query is always a real place (a Trip/City name, or
-    a Place's city fallback) - see _wikipedia_lead_image for why that's
-    treated differently from an arbitrary business/place name."""
+    a Place's city fallback) - see _wikipedia_page_info for why that's
+    treated differently from an arbitrary business/place name. hint is an
+    optional disambiguator (a country name, for a city query) - a candidate
+    whose Wikipedia description mentions it (e.g. "Town in Berkshire,
+    England" for hint "United Kingdom"... though note this is a plain
+    substring check, so it only catches a hint that literally appears in the
+    description - it won't catch every country/region naming mismatch) is
+    preferred over an earlier-ranked candidate that doesn't, e.g. "Windsor,
+    Ontario" outranks "Windsor, Berkshire" in Wikipedia's own search order."""
     key = _slugify(query)
     cached = session.get(CachedImage, key)
     if cached is not None and not force:
         return cached
 
-    title = _wikipedia_search_title(query)
-    image_url = _wikipedia_lead_image(title, require_coordinates=geo) if title else None
+    titles = _wikipedia_search_titles(query)
+
+    fallback_page: WikiPage | None = None
+    hint_lower = hint.lower() if hint else None
+    for title in titles:
+        page = _wikipedia_page_info(title, require_coordinates=geo)
+        if page is None:
+            continue
+        if fallback_page is None:
+            fallback_page = page
+        if hint_lower and hint_lower in page.description.lower():
+            fallback_page = page
+            break
+    image_url = fallback_page.image_url if fallback_page else None
     local_path = _download_image(image_url, key) if image_url else None
 
     if image_url and not local_path:

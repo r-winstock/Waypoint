@@ -228,23 +228,24 @@ h1, h2, h3, .display {
   vertical-align: bottom;
 }
 
-/* Day view's year-activity strip - a compact bar per year across all
-   recorded history, clickable to jump straight there instead of paging
-   through one day at a time. */
-.year-bar {
-  width: 8px;
-  min-width: 8px;
-  /* A neutral, more muted tone for "has data" rather than another shade of
-     the warm accent family - too close to the accent/background hues to
-     tell bars apart from each other or from the page at a glance. */
-  background: var(--wp-fg-dim);
-  opacity: 0.55;
-  border-radius: 2px 2px 0 0;
-  cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+/* Day view's history chart - a monthly visit-density graph across all
+   recorded history, replacing an earlier one-bar-per-year strip that was
+   too cramped to read at a glance ("what is this tiny thing in the
+   corner?"). Drag or click anywhere on it to jump the Day view straight to
+   that month instead of paging through one day at a time. */
+.history-chart-card {
+  background: var(--wp-surface-1); border: 1px solid var(--wp-border);
+  border-radius: var(--wp-radius-card); padding: 14px 16px;
 }
-.year-bar:hover { background: var(--wp-accent-light); opacity: 1; }
-.year-bar.active { background: var(--wp-accent); opacity: 1; }
+.history-chart {
+  width: 100%; height: 140px; display: block; cursor: crosshair; touch-action: none;
+}
+.history-chart-area { fill: var(--wp-accent); opacity: 0.18; }
+.history-chart-line { fill: none; stroke: var(--wp-accent); stroke-width: 2.5; }
+.history-chart-peak-dot { fill: var(--wp-accent-light); stroke: var(--wp-surface-1); stroke-width: 1.5; }
+.history-chart-peak-label { fill: var(--wp-fg-muted); font-size: 12px; font-family: var(--wp-font-body); }
+.history-chart-axis-label { color: var(--wp-fg-dim); font-size: 11px; font-family: var(--wp-font-body); white-space: nowrap; }
+.history-chart-playhead { stroke: var(--wp-fg-primary); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; pointer-events: none; }
 
 /* ─── Grid cards (Places / Cities / World) ─── */
 .grid-cards {
@@ -320,6 +321,20 @@ h1, h2, h3, .display {
   background: rgba(0, 0, 0, 0.4); border-color: rgba(255, 255, 255, 0.3); color: #fff;
 }
 .grid-card--photo:hover .card-photo-refresh, .trip-card:hover .card-photo-refresh { opacity: 1; }
+
+/* Shown instead of the (hover-only) refresh icon when there's no photo to
+   refresh yet - that state needs to be obvious and always visible, not
+   hidden behind a hover affordance that only makes sense once a photo has
+   already loaded. Confirmed live: major, well-documented places (Split,
+   Windsor) had no photo and no visible way to ask for one. */
+.card-photo-missing {
+  position: absolute; bottom: 12px; left: 14px; z-index: 2;
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  background: var(--wp-surface-2); border: 1px dashed var(--wp-border-strong);
+  color: var(--wp-fg-muted); font-size: 12px;
+}
+.card-photo-missing:hover { color: var(--wp-fg-primary); border-color: var(--wp-accent); }
 
 /* ─── Day timeline ─── */
 .day-row {

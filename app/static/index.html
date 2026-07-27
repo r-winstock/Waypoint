@@ -10,10 +10,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Bevan&family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 
-<link rel="stylesheet" href="/static/css/tokens.css">
-<link rel="stylesheet" href="/static/css/theme-atlas.css">
-<link rel="stylesheet" href="/static/css/theme-voyage.css">
-<link rel="stylesheet" href="/static/css/components.css">
+<link rel="stylesheet" href="/static/css/tokens.css?v=__CACHE_BUST__">
+<link rel="stylesheet" href="/static/css/theme-atlas.css?v=__CACHE_BUST__">
+<link rel="stylesheet" href="/static/css/theme-voyage.css?v=__CACHE_BUST__">
+<link rel="stylesheet" href="/static/css/components.css?v=__CACHE_BUST__">
 
 <script>
   // Pre-paint theme application: avoids a flash of the wrong theme on load.
@@ -25,10 +25,10 @@
 
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="/static/js/world-codes.js"></script>
-<script src="/static/js/map.js"></script>
+<script src="/static/js/world-codes.js?v=__CACHE_BUST__"></script>
+<script src="/static/js/map.js?v=__CACHE_BUST__"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=__CACHE_BUST__"></script>
 </head>
 
 <body class="antialiased">
@@ -85,13 +85,63 @@
         <button class="btn-icon" @click="changeDay(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
       </div>
 
-      <template x-if="day.overview && day.overview.years.length > 1">
-        <div class="mb-4">
-          <div class="text-xs mb-1" style="color: var(--wp-fg-dim)">Visits per year — click a bar to jump</div>
-          <div class="flex items-end gap-1" style="height: 36px; overflow-x: auto">
-            <template x-for="y in yearBarHeights()" :key="y.year">
-              <div class="year-bar" :class="y.active && 'active'" :style="`height:${y.height}px`" :title="y.year + ' — click to jump'" @click="goToYear(y.year)"></div>
-            </template>
+      <template x-if="day.overview && day.overview.months.length > 1">
+        <div class="mb-5 history-chart-card">
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-xs" style="color: var(--wp-fg-dim)">Visits per month — drag or click the chart to jump to a month</div>
+            <div class="text-xs font-medium tabular" style="color: var(--wp-accent-light); min-height: 15px"
+                 x-show="chartHover" x-text="chartHover && (chartMonthLabel(chartHover.month.month) + ' · ' + chartHover.month.visit_count + ' visit' + (chartHover.month.visit_count === 1 ? '' : 's'))"></div>
+          </div>
+          <!-- Neither <template x-for> nor <template x-if> reliably work
+               inside an <svg> element - confirmed live via Alpine console
+               errors ("Failed to execute importNode... parameter 1 is not
+               of type Node", "Cannot read properties of undefined
+               (reading cloneNode)"): browsers don't give a <template>
+               parsed in SVG/foreign content the DocumentFragment .content
+               Alpine's cloning relies on. x-show has no such problem - it
+               only ever toggles style="display:none" on an element that's
+               already there - so the peak marker and playhead below are
+               always-present elements toggled with x-show, not templated
+               in/out, and the year-axis labels (a real list) live as a
+               plain HTML overlay instead of SVG <text>. -->
+          <div style="position: relative">
+            <svg viewBox="0 0 1000 240" preserveAspectRatio="none" class="history-chart"
+                 @pointerdown="chartPointerDown($event)" @pointermove="chartPointerMove($event)"
+                 @pointerup="chartPointerUp()" @pointerleave="chartPointerLeave()">
+              <path :d="chartAreaPath()" class="history-chart-area"></path>
+              <path :d="chartLinePath()" class="history-chart-line"></path>
+              <circle x-show="chartPeakPoint()" :cx="chartPeakPoint() && chartPeakPoint().x" :cy="chartPeakPoint() && chartPeakPoint().y"
+                      r="4" class="history-chart-peak-dot"></circle>
+              <text x-show="chartPeakPoint()" :x="chartPeakPoint() && chartPeakPoint().x" :y="chartPeakPoint() && Math.max(12, chartPeakPoint().y - 10)"
+                    text-anchor="middle" class="history-chart-peak-label"
+                    x-text="chartPeakPoint() && (chartMonthLabel(chartPeakPoint().month.month) + ' · ' + chartPeakPoint().month.visit_count)"></text>
+              <line x-show="chartHover" :x1="chartHover && chartHover.x" :x2="chartHover && chartHover.x" y1="0" y2="200" class="history-chart-playhead"></line>
+            </svg>
+            <div class="history-chart-axis" style="position: absolute; left: 0; right: 0; bottom: 0; height: 16px; pointer-events: none">
+              <template x-for="tick in chartYearTicks()" :key="tick.label">
+                <span class="history-chart-axis-label" :style="`position:absolute; left:${tick.x / 10}%; transform:translateX(-50%)`" x-text="tick.label"></span>
+              </template>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+            <div class="stat-tile">
+              <div class="label">Total visits</div>
+              <div class="value tabular" x-text="chartStats().totalVisits"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Active months</div>
+              <div class="value tabular" x-text="chartStats().activeMonths"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Busiest month</div>
+              <div class="value" x-text="chartStats().peak ? chartMonthLabel(chartStats().peak.month) : '—'"></div>
+              <div class="detail" x-text="chartStats().peak ? chartStats().peak.visit_count + ' visits' : ''"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">History spans</div>
+              <div class="value" x-text="chartStats().firstMonth ? chartMonthLabel(chartStats().firstMonth.month) : '—'"></div>
+              <div class="detail" x-text="chartStats().lastMonth ? '– ' + chartMonthLabel(chartStats().lastMonth.month) : ''"></div>
+            </div>
           </div>
         </div>
       </template>
@@ -114,9 +164,10 @@
           </div>
 
           <div id="map-container" class="mb-3"></div>
-          <div class="text-xs mb-5" style="color: var(--wp-fg-dim)">
-            <span style="color: #3b82f6">■</span> Recorded GPS path &nbsp;·&nbsp;
-            <span style="color: var(--wp-accent)">■</span> Estimated route (no GPS log for that stretch)
+          <div class="text-xs mb-5 flex items-center gap-4 flex-wrap" style="color: var(--wp-fg-dim)">
+            <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px solid currentColor"></span> Recorded GPS path</span>
+            <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px dashed currentColor"></span> Estimated route (no GPS log for that stretch)</span>
+            <span>Line colour shows the mode of travel</span>
           </div>
 
           <template x-if="!day.data.timeline.length">
@@ -157,7 +208,31 @@
                   <template x-if="entry.type==='segment'">
                     <div>
                       <div class="flex items-center gap-2">
-                        <div class="font-medium capitalize" x-text="entry.mode"></div>
+                        <!-- Options are static markup, not a nested x-for - modeOptions
+                             never changes at runtime, and a select+x-model whose options
+                             come from a template inside this same x-for/x-if nesting raced
+                             Alpine's own initial render (confirmed live: every row selected
+                             "walking", its first option, regardless of the segment's real
+                             mode - the option list wasn't populated yet when the value was
+                             first applied). Plain static options sidestep that entirely.
+                             :value + @change rather than x-model - confirmed live that
+                             x-model's own change handler and this element's @change didn't
+                             both fire from the same change event, so updateSegmentMode()
+                             never actually ran despite the visible selection updating. -->
+                        <select class="field-input capitalize" style="display: inline-block; width: auto; padding: 2px 6px; font-size: 13px"
+                                title="Wrong mode? Change it" :value="entry.mode" @change="updateSegmentMode(entry, $event.target.value)">
+                          <option value="walking">walking</option>
+                          <option value="cycling">cycling</option>
+                          <option value="driving">driving</option>
+                          <option value="taxi">taxi</option>
+                          <option value="bus">bus</option>
+                          <option value="train">train</option>
+                          <option value="subway">subway</option>
+                          <option value="tram">tram</option>
+                          <option value="ferry">ferry</option>
+                          <option value="boating">boating</option>
+                          <option value="flying">flying</option>
+                        </select>
                         <button class="btn-icon" style="width: 24px; height: 24px" title="This was actually a stop - convert to a visit"
                                 @click="openConvertSegment(entry)">
                           <i data-lucide="map-pin-plus" class="w-3 h-3"></i>
@@ -196,11 +271,14 @@
                   <div class="trip-card" x-data="{imgFailed: false, expanded: false}"
                        @click="d.trip_count > 1 ? (expanded = !expanded) : openTrip(d.trips[0].id)">
                     <div class="banner" :class="!imgFailed && (d.primary_city || d.primary_country) && 'has-photo'">
-                      <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(d.primary_city || d.primary_country, null, true)" @error="imgFailed = true">
+                      <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(d.primary_city || d.primary_country, null, true, d.primary_city && d.primary_country)" @error="imgFailed = true">
                       <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                      <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true); imgFailed = false" title="Refresh photo">
+                      <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true, d.primary_city && d.primary_country); imgFailed = false" title="Refresh photo">
                         <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                       </button>
+                      <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true, d.primary_city && d.primary_country); imgFailed = false">
+                        <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                      </div>
                       <span class="count-badge" x-show="d.trip_count > 1" x-text="d.trip_count + ' visits'"></span>
                       <div class="title" x-text="d.primary_city || d.primary_country || 'Trip'"></div>
                     </div>
@@ -251,7 +329,7 @@
 
       <template x-if="trips.detail">
         <div>
-          <button class="nav-tab mb-3" @click="closeTrip()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to trips</button>
+          <button class="nav-tab mb-3" @click="history.back()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to trips</button>
           <div class="text-lg font-semibold display mb-1" x-text="trips.detail.primary_city || trips.detail.primary_country || 'Trip'"></div>
           <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="formatDateRange(trips.detail.start_ts, trips.detail.end_ts) + ' · ' + trips.detail.days + ' day' + (trips.detail.days > 1 ? 's' : '')"></div>
 
@@ -366,16 +444,19 @@
 
       <template x-if="places.category">
         <div>
-          <button class="nav-tab mb-3" @click="closeCategory()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to categories</button>
+          <button class="nav-tab mb-3" @click="history.back()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to categories</button>
           <h2 class="text-lg font-semibold mb-3 display" x-text="places.category"></h2>
           <div class="grid-cards">
             <template x-for="p in (places.categoryData ? places.categoryData.places : [])" :key="p.id">
               <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: pointer" @click="togglePlaceVisits(p.id)">
-                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(p.name || p.city, p.city)" @error="imgFailed = true">
+                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(p.name || p.city, p.city, false, p.city)" @error="imgFailed = true">
                 <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(p.name || p.city); imgFailed = false" title="Refresh photo">
+                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(p.name || p.city, false, p.city); imgFailed = false" title="Refresh photo">
                   <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                 </button>
+                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(p.name || p.city, false, p.city); imgFailed = false">
+                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                </div>
                 <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; z-index: 2" title="This place is wrong? Fix it"
                         @click.stop="openPlaceEdit(p.id, p.name, places.category, p.city, null, null)">
                   <i data-lucide="pencil" class="w-3 h-3"></i>
@@ -410,11 +491,14 @@
           <div class="grid-cards">
             <template x-for="c in (cities.data ? cities.data.cities : [])" :key="c.name">
               <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" @click="openCity(c.name)">
-                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true)" @error="imgFailed = true">
+                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true, c.country)" @error="imgFailed = true">
                 <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                <button class="btn-icon card-photo-refresh" @click.stop="refreshCardImage(c.name, true); imgFailed = false" title="Refresh photo">
+                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(c.name, true, c.country); imgFailed = false" title="Refresh photo">
                   <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                 </button>
+                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(c.name, true, c.country); imgFailed = false">
+                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                </div>
                 <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
                 <div class="card-photo-content">
                   <div class="title" x-text="c.name"></div>
@@ -432,7 +516,7 @@
 
       <template x-if="cities.detail">
         <div>
-          <button class="nav-tab mb-3" @click="closeCity()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to cities</button>
+          <button class="nav-tab mb-3" @click="history.back()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to cities</button>
           <div class="text-lg font-semibold display mb-1" x-text="cities.detail.city_name"></div>
           <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="cities.detail.places.length + ' place' + (cities.detail.places.length === 1 ? '' : 's')"></div>
 
@@ -440,14 +524,23 @@
 
           <div class="grid-cards">
             <template x-for="p in cities.detail.places" :key="p.id">
-              <div class="grid-card" style="cursor: default">
-                <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px" title="This place is wrong? Fix it"
-                        @click="openPlaceEdit(p.id, p.name, p.category, cities.detail.city_name, null, null)">
+              <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: default">
+                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(p.name || cities.detail.city_name, cities.detail.city_name, false, cities.detail.country)" @error="imgFailed = true">
+                <div x-show="!imgFailed" class="card-photo-scrim"></div>
+                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(p.name || cities.detail.city_name, false, cities.detail.country); imgFailed = false" title="Refresh photo">
+                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                </button>
+                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(p.name || cities.detail.city_name, false, cities.detail.country); imgFailed = false">
+                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                </div>
+                <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; z-index: 2" title="This place is wrong? Fix it"
+                        @click.stop="openPlaceEdit(p.id, p.name, p.category, cities.detail.city_name, null, null)">
                   <i data-lucide="pencil" class="w-3 h-3"></i>
                 </button>
-                <div class="text-2xl" x-text="categoryIcon(p.category)"></div>
-                <div class="title" x-text="p.name || 'Unnamed place'"></div>
-                <div class="text-xs mt-2" style="color: var(--wp-fg-dim)" x-text="p.visit_count + ' visit' + (p.visit_count > 1 ? 's' : '') + ' · last ' + formatRelative(p.last_visit_ts)"></div>
+                <div class="card-photo-content">
+                  <div class="title" x-text="p.name || 'Unnamed place'"></div>
+                  <div class="text-xs mt-2" :style="imgFailed ? 'color: var(--wp-fg-dim)' : 'color: rgba(255,255,255,0.85)'" x-text="p.visit_count + ' visit' + (p.visit_count > 1 ? 's' : '') + ' · last ' + formatRelative(p.last_visit_ts)"></div>
+                </div>
               </div>
             </template>
           </div>
@@ -484,7 +577,7 @@
 
       <template x-if="world.detail">
         <div>
-          <button class="nav-tab mb-3" @click="closeCountry()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to world</button>
+          <button class="nav-tab mb-3" @click="history.back()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to world</button>
           <div class="flex items-center gap-2 mb-1">
             <img :src="flagImageUrl(world.detail.country_code, 80)" style="width: 32px; height: auto; border-radius: 3px">
             <div class="text-lg font-semibold display" x-text="world.detail.country_name"></div>
@@ -495,10 +588,20 @@
 
           <div class="grid-cards">
             <template x-for="c in world.detail.cities" :key="c.name">
-              <div class="grid-card" style="cursor: default">
+              <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: default">
+                <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true, world.detail.country_name)" @error="imgFailed = true">
+                <div x-show="!imgFailed" class="card-photo-scrim"></div>
+                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(c.name, true, world.detail.country_name); imgFailed = false" title="Refresh photo">
+                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                </button>
+                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(c.name, true, world.detail.country_name); imgFailed = false">
+                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                </div>
                 <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
-                <div class="title" x-text="c.name"></div>
-                <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+                <div class="card-photo-content">
+                  <div class="title" x-text="c.name"></div>
+                  <div class="subtitle" x-text="formatRelative(c.last_visit_ts)"></div>
+                </div>
               </div>
             </template>
           </div>

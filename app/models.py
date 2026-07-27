@@ -144,3 +144,24 @@ class CachedImage(Base):
     source_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     found: Mapped[bool] = mapped_column(default=False)
     fetched_at: Mapped[int] = mapped_column(Integer)
+
+
+class CachedRoute(Base):
+    """A snapped rail path for a single train/subway/tram TripSegment,
+    computed via Overpass + a small self-built graph search - see
+    app/routing.py for why: OSRM (used for driving/walking/cycling) has no
+    free public equivalent for rail routing. Keyed by segment_id, not a
+    slugified query like CachedImage, since a segment's endpoints are unique
+    to it - there's no shared-across-many-rows case the way one city name
+    covers many places. found=False (points_json=None) is itself a cached
+    result (no rail network found nearby, or the two visits don't snap
+    close enough to one) so a segment that genuinely has no rail path
+    doesn't re-query Overpass on every day view."""
+
+    __tablename__ = "cached_routes"
+
+    segment_id: Mapped[int] = mapped_column(ForeignKey("trip_segments.id"), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16))
+    points_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    found: Mapped[bool] = mapped_column(default=False)
+    fetched_at: Mapped[int] = mapped_column(Integer)

@@ -63,16 +63,24 @@
   --wp-cat-other: #8a7a4a;
 
   /* Travel modes */
+  /* driving darkened/more saturated from the original #b07f2e - that was
+     too close in lightness to the parchment map tiles to read as anything
+     but a muddy smear, confirmed live even with the white line-casing.
+     ferry/boating moved off blue/teal entirely - those are exactly the
+     hues of the water these two modes travel over, so a route drawn in
+     them vanished against any lake/sea on both the standard and satellite
+     tile sets (confirmed live: a real boat crossing was flagged as
+     invisible on both). */
   --wp-mode-walking: #3f7a5c;
   --wp-mode-cycling: #6b8e4e;
-  --wp-mode-driving: #b07f2e;
+  --wp-mode-driving: #7a3812;
   --wp-mode-taxi: #c9a227;
   --wp-mode-bus: #b5651d;
   --wp-mode-train: #4a6670;
   --wp-mode-subway: #7c5295;
   --wp-mode-tram: #2f7d7d;
-  --wp-mode-ferry: #35586b;
-  --wp-mode-boating: #4f8a7b;
+  --wp-mode-ferry: #a3376b;
+  --wp-mode-boating: #c17817;
   --wp-mode-flying: #a4432f;
 
   /* Leaflet popup */

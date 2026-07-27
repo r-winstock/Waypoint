@@ -63,6 +63,10 @@
   --wp-cat-other: #94a3b8;
 
   /* Travel modes */
+  /* ferry/boating moved off blue/teal - the underlying Leaflet tiles (OSM
+     streets/satellite) aren't reskinned by this theme, so a route in those
+     hues still vanished against real lake/sea water regardless of which
+     app theme was active - see theme-voyage.css for the same fix. */
   --wp-mode-walking: #34d399;
   --wp-mode-cycling: #a3e635;
   --wp-mode-driving: #3b82f6;
@@ -71,8 +75,8 @@
   --wp-mode-train: #6366f1;
   --wp-mode-subway: #d946ef;
   --wp-mode-tram: #06b6d4;
-  --wp-mode-ferry: #0ea5e9;
-  --wp-mode-boating: #14b8a6;
+  --wp-mode-ferry: #ec4899;
+  --wp-mode-boating: #f59e0b;
   --wp-mode-flying: #8b5cf6;
 
   /* Leaflet popup */

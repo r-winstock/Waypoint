@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import cities, day, events, images, insights, places, settings, trips, world
+from app.api import cities, day, events, images, insights, places, routing, settings, trips, world
 from app.db import get_session, init_db
 from app.ingest import router as ingest_router
 from app.processing import process_all
@@ -15,6 +16,12 @@ from app.scheduler import start_scheduler, stop_scheduler
 from app.version import __version__
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Tied to process start time rather than __version__ - every restart (any
+# deploy, any dev reload) busts cached static assets this way, not just a
+# version bump specifically. See the no_cache_static middleware below for
+# why a cache-buster is needed at all.
+_CACHE_BUST = str(int(time.time()))
 
 
 @asynccontextmanager
@@ -27,9 +34,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Waypoint", version=__version__, lifespan=lifespan)
 
+
+@app.middleware("http")
+async def no_cache_static(request, call_next):
+    """Browsers will heuristically cache a static file for a while even with
+    no explicit Cache-Control header at all, confirmed live: editing app.js/
+    index.html had no visible effect in an already-open tab, and a plain
+    reload wasn't enough to fetch the new version either - only a hard,
+    cache-bypassing reload was. no-cache (not no-store) still lets the
+    browser revalidate cheaply via the ETag/Last-Modified StaticFiles/
+    FileResponse already send, so this doesn't turn every load into a full
+    re-download - it just stops a stale copy being used without even asking."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.include_router(ingest_router)
 app.include_router(events.router)
 app.include_router(images.router)
+app.include_router(routing.router)
 app.include_router(day.router)
 app.include_router(trips.router)
 app.include_router(insights.router)
@@ -58,4 +83,6 @@ def trigger_processing():
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace("__CACHE_BUST__", _CACHE_BUST)
+    return HTMLResponse(html)

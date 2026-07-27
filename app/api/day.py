@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import Integer, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import db_dependency
@@ -25,24 +25,44 @@ def _day_bounds(day_str: str) -> tuple[int, int]:
 
 @router.get("/api/day/overview")
 def get_day_overview(session: Session = Depends(db_dependency)):
-    """Per-year visit counts across all recorded history, for the Day view's
-    year-strip navigator - clicking through one day at a time to reach an
-    old date is painful with 11+ years of history. min_ts/max_ts let the
-    frontend jump to a real date with data in that year rather than always
-    landing on 1 January, which may have none."""
-    year_expr = func.cast(func.strftime("%Y", Visit.start_ts, "unixepoch"), Integer)
+    """Monthly visit density across all recorded history, for the Day view's
+    timeline chart (replaces an earlier, cramped year-strip navigator -
+    clicking through one day at a time to reach an old date is painful with
+    11+ years of history). min_ts/max_ts let the frontend jump to a real
+    date with data in that month rather than always landing on the 1st,
+    which may have none.
+
+    Months with zero visits are filled in as explicit zero-count entries
+    between the first and last month that has any data, rather than simply
+    omitted - a density chart's x-axis needs to be an evenly-spaced
+    timeline, and skipping empty months would silently compress a real gap
+    (e.g. several quiet years) into looking adjacent to the months either
+    side of it."""
+    month_expr = func.strftime("%Y-%m", Visit.start_ts, "unixepoch")
     rows = (
-        session.query(year_expr.label("year"), func.count(Visit.id), func.min(Visit.start_ts), func.max(Visit.start_ts))
-        .group_by("year")
-        .order_by("year")
+        session.query(month_expr.label("month"), func.count(Visit.id), func.min(Visit.start_ts), func.max(Visit.start_ts))
+        .group_by("month")
+        .order_by("month")
         .all()
     )
-    return {
-        "years": [
-            {"year": year, "visit_count": count, "min_ts": min_ts, "max_ts": max_ts}
-            for year, count, min_ts, max_ts in rows
-        ]
-    }
+    if not rows:
+        return {"months": []}
+
+    by_month = {month: (count, min_ts, max_ts) for month, count, min_ts, max_ts in rows}
+    first_year, first_month = (int(x) for x in rows[0][0].split("-"))
+    last_year, last_month = (int(x) for x in rows[-1][0].split("-"))
+
+    months = []
+    y, m = first_year, first_month
+    while (y, m) <= (last_year, last_month):
+        key = f"{y:04d}-{m:02d}"
+        count, min_ts, max_ts = by_month.get(key, (0, None, None))
+        months.append({"month": key, "visit_count": count, "min_ts": min_ts, "max_ts": max_ts})
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return {"months": months}
 
 
 @router.get("/api/day/{day_str}")
