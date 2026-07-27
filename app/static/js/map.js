@@ -124,6 +124,47 @@ async function wpFetchRoute(mode, fromLat, fromLon, toLat, toLon) {
   }
 }
 
+// A recorded GPS point is real, but sparse historical points (see
+// scripts/import_raw_signals.py - captured at wifi-scan/significant-
+// location-change intervals, not continuous tracking) can be a kilometre
+// or more apart. Joining them with plain straight lines then cuts directly
+// across fields wherever the real road bends between two consecutive
+// fixes - confirmed live, and worse than not knowing the road at all,
+// since it reads as confidently wrong rather than honestly uncertain.
+// Passing every recorded point as an ordered OSRM waypoint keeps the route
+// anchored to what was actually recorded while still following real roads
+// between each pair - this is the same class of fix as the OSRM/rail
+// "estimated route" upgrade below, just seeded with real waypoints instead
+// of only the two flanking visits.
+async function wpFetchRouteViaPoints(mode, latlngs) {
+  const profile = OSRM_PROFILES[mode];
+  if (!profile || latlngs.length < 2) return null;
+  try {
+    const coords = latlngs.map(([lat, lon]) => `${lon},${lat}`).join(';');
+    const url = `https://router.project-osrm.org/route/v1/${profile}/${coords}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.code !== 'Ok' || !data.routes || !data.routes.length) return null;
+    return data.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Live OwnTracks tracking pings every few seconds/tens of metres - dense
+// enough that connecting them directly already hugs the real road, no
+// snapping needed (and not wanted - it's real data, no reason to spend an
+// OSRM call second-guessing it). Only a sparse sequence (backfilled
+// historical points) benefits from the snap-through-waypoints upgrade.
+const SPARSE_AVG_GAP_M = 400;
+
+function wpIsSparsePath(latlngs) {
+  if (latlngs.length < 2) return false;
+  let total = 0;
+  for (let i = 1; i < latlngs.length; i++) total += wpHaversineM(latlngs[i - 1], latlngs[i]);
+  return total / (latlngs.length - 1) > SPARSE_AVG_GAP_M;
+}
+
 // train/subway/tram have no OSRM equivalent (no free public router does
 // timetabled/rail routing) - these are snapped server-side instead, against
 // OSM railway data via Overpass, and cached per-segment since that query is
@@ -219,12 +260,16 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}) {
   // sea it crossed. Recorded-vs-estimated is now conveyed by line style
   // (solid here, dashed below) rather than colour, so colour is free to
   // just mean "mode" consistently everywhere on the map.
+  const toSnap = [];
   for (const seg of segments) {
     const legPoints = points.filter((p) => p.tst >= seg.start_ts && p.tst <= seg.end_ts);
     if (legPoints.length < 2) continue;
     const latlngs = legPoints.map((p) => [p.lat, p.lon]);
-    wpAddLayer(map, wpCasedPolyline(latlngs, wpModeColor(seg.mode), { opacity: 0.9 }));
+    const line = wpAddLayer(map, wpCasedPolyline(latlngs, wpModeColor(seg.mode), { opacity: 0.9 }));
     bounds.push(...latlngs);
+    if (wpIsSparsePath(latlngs) && OSRM_PROFILES[seg.mode]) {
+      toSnap.push({ mode: seg.mode, latlngs, color: wpModeColor(seg.mode), line });
+    }
   }
 
   visits.forEach((v) => {
@@ -323,6 +368,21 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}) {
       // the path taken, not something GPS actually recorded, and the dash
       // is the only remaining signal for that now colour is mode-only.
       wpAddLayer(map, wpCasedPolyline(routed, color, { dashArray: '4 8' }));
+    }
+  });
+
+  // Same non-blocking upgrade pattern, for sparse recorded paths (see
+  // wpIsSparsePath) - stays solid, not dashed, even once snapped: it's
+  // still built from real recorded waypoints, just following actual roads
+  // between them now instead of jumping straight across whatever's between
+  // two fixes a kilometre or more apart.
+  toSnap.forEach(async ({ mode, latlngs, color, line }) => {
+    const routed = await wpFetchRouteViaPoints(mode, latlngs);
+    if (renderToken !== _wpDayMapRenderToken) return;
+    if (routed) {
+      map.removeLayer(line);
+      map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
+      wpAddLayer(map, wpCasedPolyline(routed, color, { opacity: 0.9 }));
     }
   });
 }

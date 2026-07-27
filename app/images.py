@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -47,8 +48,19 @@ def _slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "unknown"
 
 
+def _strip_diacritics(s: str) -> str:
+    """"Kraków" -> "krakow" - the [a-z0-9]+ word regex below only matches
+    ASCII, so an accented letter silently split a word in two instead of
+    just being ignored (confirmed live: significant_words("Kraków") came
+    back as {"krak"}, not {"krakow"} - the trailing "w" alone was too short
+    to count as its own word). NFKD decomposes each accented character into
+    its base letter plus a separate combining-mark codepoint, which the
+    unicode category check then strips - leaving plain "krakow"."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if unicodedata.category(c) != "Mn")
+
+
 def _significant_words(s: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) > 2 and w not in _STOPWORDS}
+    return {w for w in re.findall(r"[a-z0-9]+", _strip_diacritics(s).lower()) if len(w) > 2 and w not in _STOPWORDS}
 
 
 _COUNTRY_DESCRIPTION_RE = re.compile(r"\bcountry\b", re.IGNORECASE)

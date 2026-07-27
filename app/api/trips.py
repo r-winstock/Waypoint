@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.country_names import country_name_en
 from app.db import db_dependency
 from app.models import Trip, TripSegment
 
@@ -35,7 +36,14 @@ def get_trips(page: int = 1, page_size: int = 24, session: Session = Depends(db_
         if key not in groups:
             groups[key] = {
                 "primary_city": t.primary_city,
-                "primary_country": t.primary_country,
+                # English, not the raw stored (sometimes local-language)
+                # value - used as the photo-search hint on Trip cards, and
+                # Wikipedia's own descriptions are always in English
+                # ("Second-largest city in Italy") - a hint of "Italia"
+                # never matches anything, confirmed live this silently
+                # broke Milan's photo even after the city name itself was
+                # corrected to English.
+                "primary_country": country_name_en(t.primary_country_code, t.primary_country),
                 "primary_country_code": t.primary_country_code,
                 "trip_count": 0,
                 "total_days": 0,
@@ -134,7 +142,7 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
         "end_ts": trip.end_ts,
         "days": max(1, (trip.end_ts - trip.start_ts) // 86400 + 1),
         "primary_city": trip.primary_city,
-        "primary_country": trip.primary_country,
+        "primary_country": country_name_en(trip.primary_country_code, trip.primary_country),
         "primary_country_code": trip.primary_country_code,
         "timeline": timeline,
     }
