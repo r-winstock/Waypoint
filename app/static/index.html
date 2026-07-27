@@ -71,7 +71,7 @@
 <div x-data="waypoint()" x-init="init()" @wp-resource-failure.window="if (!resourceFailures.includes($event.detail.host)) resourceFailures.push($event.detail.host)">
 
   <div class="resource-failure-banner" x-show="resourceFailures.length && !resourceFailuresDismissed" x-cloak>
-    <span>Couldn't load: <strong x-text="resourceFailures.join(', ')"></strong> — check your DNS/firewall allow-list.</span>
+    <span>Couldn't load: <strong x-text="resourceFailures.join(', ')"></strong> — could be blocked, offline, or just a blip. Try reloading.</span>
     <button class="btn-icon" @click="resourceFailuresDismissed = true"><i data-lucide="x" class="w-3 h-3"></i></button>
   </div>
 

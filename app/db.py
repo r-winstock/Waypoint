@@ -35,27 +35,31 @@ DEFAULT_SETTINGS = {
 # personal-use SQLite file doesn't warrant one), so a column added to a
 # model after the table already exists on disk needs an explicit ALTER
 # TABLE, run once here at startup and skipped thereafter via PRAGMA
-# table_info. Kept minimal/inline rather than a generic migration system -
-# this is the second time it's been needed (google_place_id was added
-# before the first real deploy, so never needed this path).
-_PLACE_COLUMN_MIGRATIONS = {
-    "name_local": "VARCHAR(255)",
-    "city_local": "VARCHAR(128)",
+# table_info.
+_COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
+    "places": {
+        "name_local": "VARCHAR(255)",
+        "city_local": "VARCHAR(128)",
+    },
+    "location_points": {
+        "source": "VARCHAR(16) NOT NULL DEFAULT 'owntracks'",
+    },
 }
 
 
-def _migrate_place_columns() -> None:
+def _migrate_columns() -> None:
     with engine.connect() as conn:
-        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(places)").fetchall()}
-        for column, col_type in _PLACE_COLUMN_MIGRATIONS.items():
-            if column not in existing:
-                conn.exec_driver_sql(f"ALTER TABLE places ADD COLUMN {column} {col_type}")
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()}
+            for column, col_type in columns.items():
+                if column not in existing:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
         conn.commit()
 
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
-    _migrate_place_columns()
+    _migrate_columns()
     with SessionLocal() as session:
         seed_default_settings(session)
         session.commit()

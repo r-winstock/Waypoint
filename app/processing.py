@@ -92,9 +92,19 @@ def process_all(session: Session) -> None:
     simpler than incremental streaming updates - safe to re-run on every
     scheduler tick."""
 
+    # source="owntracks" only - a backfilled historical point (see
+    # LocationPoint's docstring) must never be clustered into a competing
+    # Visit/TripSegment alongside the ones Google's own semanticSegments
+    # import already produced for that same time range. Those points exist
+    # purely for the Day map's raw-GPS-trace rendering, which reads
+    # LocationPoint directly (see app/api/day.py) with no source filter -
+    # the filter only needs to happen here, at classification time.
     points = [
         RawPoint(p.lat, p.lon, p.tst)
-        for p in session.query(LocationPoint).order_by(LocationPoint.tst).all()
+        for p in session.query(LocationPoint)
+        .filter(LocationPoint.source == "owntracks")
+        .order_by(LocationPoint.tst)
+        .all()
     ]
     if not points:
         return

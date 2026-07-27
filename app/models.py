@@ -9,7 +9,15 @@ class Base(DeclarativeBase):
 
 
 class LocationPoint(Base):
-    """Raw OwnTracks pings, one row per HTTP location report."""
+    """Raw OwnTracks pings, one row per HTTP location report - plus, since
+    source was added, backfilled historical points recovered from a Google
+    Timeline export's rawSignals (see scripts/import_raw_signals.py). The
+    stay-point/trip-segment rebuild only ever clusters source="owntracks"
+    rows (see processing.py) - a backfilled point exists purely so the Day
+    map has a real GPS trace to draw for imported history, never to be
+    reclassified into a competing set of Visits/TripSegments alongside the
+    ones Google's own semanticSegments already produced for that same time
+    range."""
 
     __tablename__ = "location_points"
 
@@ -22,6 +30,7 @@ class LocationPoint(Base):
     vel: Mapped[float | None] = mapped_column(Float, nullable=True)
     batt: Mapped[float | None] = mapped_column(Float, nullable=True)
     tst: Mapped[int] = mapped_column(Integer, index=True)  # unix seconds
+    source: Mapped[str] = mapped_column(String(16), default="owntracks", index=True)
 
 
 class Place(Base):
