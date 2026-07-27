@@ -13,21 +13,37 @@
 // two South Americas side by side. Paired with maxBounds on the map itself
 // in wpInitMap so panning can't scroll into the (now blank) repeated area
 // either.
+// bounds (a GridLayer option, distinct from the map-level maxBounds tried
+// and reverted for the World map - see wpInitMap's own comment) stops
+// Leaflet's tile prefetch (keepBuffer, default 2 rows/columns beyond the
+// viewport) from ever requesting a tile outside the real world at all -
+// confirmed live this was the actual cause of a "You requested an invalid
+// tile" 400 from OSM's own server at low zoom (the World map sits at
+// zoom 1, a 2x2 tile grid, and the buffer prefetch reached for a
+// nonexistent 3rd row). Harmless to the map itself (Leaflet just leaves
+// that one tile blank) but it's a real failed request, so it correctly
+// tripped the failed-external-resource banner - worth not generating in
+// the first place rather than just tolerating the false alarm.
+const WP_WORLD_BOUNDS = [[-90, -180], [90, 180]];
+
 const WP_BASE_LAYERS = {
   Streets: () => L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
     noWrap: true,
+    bounds: WP_WORLD_BOUNDS,
   }),
   Satellite: () => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: 'Tiles &copy; Esri',
     maxZoom: 19,
     noWrap: true,
+    bounds: WP_WORLD_BOUNDS,
   }),
   Terrain: () => L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors, SRTM | &copy; OpenTopoMap',
     maxZoom: 17,
     noWrap: true,
+    bounds: WP_WORLD_BOUNDS,
   }),
 };
 
