@@ -51,6 +51,22 @@ def _significant_words(s: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) > 2 and w not in _STOPWORDS}
 
 
+_COUNTRY_DESCRIPTION_RE = re.compile(r"\bcountry\b", re.IGNORECASE)
+
+
+def _is_country_article(description: str) -> bool:
+    """Wikipedia's short description for every sovereign nation reliably
+    contains the word "country" ("Country in East Asia", "Island country in
+    the Atlantic Ocean", confirmed live across several real examples) - no
+    call site here ever wants a nation's own article as a card photo, so
+    this is always rejected outright rather than gated behind a flag.
+    Found live: a Place literally named "Iceland" (a UK supermarket chain
+    branch, its real OSM name) matched Wikipedia's search to the country
+    Iceland's own article - a strong, confident title match with nothing
+    about it looking wrong until you notice the flag isn't a shop."""
+    return bool(_COUNTRY_DESCRIPTION_RE.search(description))
+
+
 def _plausible_match(query: str, title: str) -> bool:
     """Wikipedia's search is a loose full-text match, not a lookup - for an
     arbitrary business/place name with no real Wikipedia page, the "best"
@@ -204,6 +220,8 @@ def get_or_fetch_image(
     for title in titles:
         page = _wikipedia_page_info(title, require_coordinates=geo)
         if page is None:
+            continue
+        if _is_country_article(page.description):
             continue
         if fallback_page is None:
             fallback_page = page

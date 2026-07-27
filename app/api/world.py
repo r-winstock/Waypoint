@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.country_names import country_name_en
 from app.db import db_dependency
 from app.models import Place, Visit
 
@@ -28,7 +29,8 @@ def get_world(session: Session = Depends(db_dependency)):
     return {
         "countries": [
             {
-                "name": country,
+                "name": country_name_en(country_code, country),
+                "local_name": country if country_name_en(country_code, country) != country else None,
                 "country_code": country_code,
                 "city_count": city_count,
                 "last_visit_ts": last_ts,
@@ -46,9 +48,13 @@ def get_country_detail(country_code: str, session: Session = Depends(db_dependen
     )
     if name_row is None:
         raise HTTPException(status_code=404, detail="No visited places found for this country")
+    display_name = country_name_en(country_code, name_row[0])
+    local_name = name_row[0] if display_name != name_row[0] else None
 
     city_rows = (
-        session.query(Place.city, func.count(func.distinct(Place.id)), func.max(Visit.end_ts))
+        session.query(
+            Place.city, func.count(func.distinct(Place.id)), func.max(Visit.end_ts), func.max(Place.city_local)
+        )
         .join(Visit, Visit.place_id == Place.id)
         .filter(Place.country_code == country_code, Place.city.isnot(None))
         .group_by(Place.city)
@@ -59,10 +65,11 @@ def get_country_detail(country_code: str, session: Session = Depends(db_dependen
 
     return {
         "country_code": country_code,
-        "country_name": name_row[0],
+        "country_name": display_name,
+        "country_local_name": local_name,
         "cities": [
-            {"name": city, "place_count": place_count, "last_visit_ts": last_ts}
-            for city, place_count, last_ts in city_rows
+            {"name": city, "place_count": place_count, "last_visit_ts": last_ts, "local_name": local_name}
+            for city, place_count, last_ts, local_name in city_rows
         ],
         "pins": [
             {"lat": p.lat_round, "lon": p.lon_round, "name": p.name, "category": p.category, "city": p.city}

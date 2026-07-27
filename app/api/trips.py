@@ -58,6 +58,7 @@ def get_trips(page: int = 1, page_size: int = 24, session: Session = Depends(db_
                         "lat": v.lat,
                         "lon": v.lon,
                         "place_name": v.place.name if v.place else None,
+                        "place_name_local": v.place.name_local if v.place else None,
                         "category": v.place.category if v.place else None,
                         "city": v.place.city if v.place else None,
                     }
@@ -108,6 +109,7 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
             "lon": v.lon,
             "place_id": v.place_id,
             "place_name": v.place.name if v.place else None,
+            "place_name_local": v.place.name_local if v.place else None,
             "category": v.place.category if v.place else None,
             "city": v.place.city if v.place else None,
         }

@@ -89,6 +89,23 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
         .all()
     )
 
+    # A segment that starts today but ends tomorrow (an overnight flight, a
+    # late drive home) has its arrival Visit entirely outside today's own
+    # window - confirmed live this meant the map had no coordinate to draw
+    # that segment's line to at all (the "nearest visit either side" lookup
+    # found nothing after it) even though the segment itself correctly shows
+    # up in today's timeline/stats above. The single nearest visit just
+    # before start_ts and just after end_ts, wherever they actually fall, is
+    # enough for the map to draw right up to (not into) the adjacent day -
+    # these are never added to the timeline/stats, only used as map
+    # endpoints.
+    before_visit = (
+        session.query(Visit).filter(Visit.end_ts <= start_ts).order_by(Visit.end_ts.desc()).first()
+    )
+    after_visit = (
+        session.query(Visit).filter(Visit.start_ts >= end_ts).order_by(Visit.start_ts).first()
+    )
+
     # Coalesce consecutive visits to the same resolved place with only a
     # short gap between them into one displayed entry. Each pipeline's own
     # merge logic only ever considers rows of its own source (Visit.source -
@@ -121,6 +138,7 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
                     "lon": v.lon,
                     "place_id": v.place_id,
                     "place_name": v.place.name if v.place else None,
+                    "place_name_local": v.place.name_local if v.place else None,
                     "category": v.place.category if v.place else None,
                     "city": v.place.city if v.place else None,
                 }
@@ -155,4 +173,8 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
         "stats": {**stats, "visits": len(coalesced_visits)},
         "points": [{"lat": p.lat, "lon": p.lon, "tst": p.tst} for p in points],
         "timeline": timeline,
+        "context_visits": {
+            "before": {"lat": before_visit.lat, "lon": before_visit.lon} if before_visit else None,
+            "after": {"lat": after_visit.lat, "lon": after_visit.lon} if after_visit else None,
+        },
     }

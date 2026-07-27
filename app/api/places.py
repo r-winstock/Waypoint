@@ -151,6 +151,7 @@ def get_places_in_category(category: str, session: Session = Depends(db_dependen
         session.query(
             Place.id,
             Place.name,
+            Place.name_local,
             Place.city,
             func.count(Visit.id),
             func.max(Visit.end_ts),
@@ -164,7 +165,14 @@ def get_places_in_category(category: str, session: Session = Depends(db_dependen
     return {
         "category": category,
         "places": [
-            {"id": place_id, "name": name, "city": city, "visit_count": visit_count, "last_visit_ts": last_ts}
-            for place_id, name, city, visit_count, last_ts in rows
+            {
+                "id": place_id,
+                "name": name,
+                "name_local": name_local,
+                "city": city,
+                "visit_count": visit_count,
+                "last_visit_ts": last_ts,
+            }
+            for place_id, name, name_local, city, visit_count, last_ts in rows
         ],
     }

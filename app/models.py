@@ -41,6 +41,13 @@ class Place(Base):
     category: Mapped[str] = mapped_column(String(64), default="Other places")
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     country: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The place/city's own name in its local language, when Nominatim's
+    # English (Accept-Language: en) response differs from it - e.g. name is
+    # "Milan", name_local is "Milano". Only ever populated when it's a real,
+    # different string worth showing as a subtitle - never just a duplicate
+    # of name/city.
+    name_local: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city_local: Mapped[str | None] = mapped_column(String(128), nullable=True)
     country_code: Mapped[str | None] = mapped_column(String(4), nullable=True)
     raw_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # True once a user has corrected this place via /api/places/{id} - purely

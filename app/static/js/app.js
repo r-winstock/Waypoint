@@ -32,6 +32,19 @@ function formatTime(ts) {
   return new Date(ts * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
+// A plain "20:28 – 13:14" reads as same-day even when the end time is
+// actually the next calendar day (or later) - confirmed live this was
+// genuinely confusing (a Home visit still open at view time, an overnight
+// flight), not a data bug. Appends how many calendar days later the end
+// time falls, only when it's actually different from the start day.
+function formatTimeRange(startTs, endTs) {
+  const start = new Date(startTs * 1000);
+  const end = new Date(endTs * 1000);
+  const dayDiff = Math.round((new Date(end.toDateString()) - new Date(start.toDateString())) / 86400000);
+  const range = `${formatTime(startTs)} – ${formatTime(endTs)}`;
+  return dayDiff > 0 ? `${range} (+${dayDiff}d)` : range;
+}
+
 function formatDateRange(startTs, endTs) {
   const opts = { day: 'numeric', month: 'long', year: 'numeric' };
   const start = new Date(startTs * 1000);
@@ -72,6 +85,7 @@ const CATEGORY_ICONS = {
   'Entertainment': '\u{1F3AC}',
   'Parks and nature': '\u{1F333}',
   'Offices and services': '\u{1F3E2}',
+  'Streets and roads': '\u{1F6E3}',
   'Other places': '\u{1F4CD}',
 };
 
@@ -100,6 +114,7 @@ const CATEGORY_COLOR_VARS = {
   'Entertainment': 'entertainment',
   'Parks and nature': 'parks',
   'Offices and services': 'offices',
+  'Streets and roads': 'streets',
   'Other places': 'other',
 };
 
@@ -135,7 +150,7 @@ function waypoint() {
     trips: { data: null, loading: false, page: 1, map: null, detail: null, detailLoading: false, detailMap: null },
     insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false },
     places: { data: null, loading: false, category: null, categoryData: null },
-    cities: { data: null, loading: false, detail: null, detailLoading: false, detailMap: null },
+    cities: { data: null, loading: false, page: 1, detail: null, detailLoading: false, detailMap: null },
     world: { data: null, loading: false, map: null, detail: null, detailLoading: false, detailMap: null },
 
     placeEdit: {
@@ -156,6 +171,7 @@ function waypoint() {
     formatMiles,
     formatDuration,
     formatTime,
+    formatTimeRange,
     formatDateRange,
     formatRelative,
     flagImageUrl,
@@ -232,8 +248,18 @@ function waypoint() {
       window.dispatchEvent(new CustomEvent('wp-image-updated', { detail: { query } }));
     },
 
+    appVersion: null,
+    // Populated from window.__wpResourceFailures (see the inline listener at
+    // the top of index.html's <head>, which starts catching failures before
+    // Alpine even exists) plus the @wp-resource-failure.window listener on
+    // the root element for anything that fails after this point (map tiles,
+    // flag images - all loaded well after init()).
+    resourceFailures: [],
+    resourceFailuresDismissed: false,
     init() {
+      this.resourceFailures = [...(window.__wpResourceFailures || [])];
       this.applyTheme(this.theme);
+      fetch('/healthz').then((r) => r.json()).then((d) => { this.appVersion = d.version; }).catch(() => {});
       this.loadDay();
       this.loadDayOverview();
       // Opening a Trip/City/Country/category detail pushes a history entry
@@ -464,7 +490,7 @@ function waypoint() {
     },
     renderDayMap() {
       if (!this.day.map) this.day.map = wpInitMap('map-container');
-      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline);
+      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits);
     },
     dayStatModes() {
       if (!this.day.data) return [];
@@ -627,6 +653,24 @@ function waypoint() {
       if (!day) return '';
       return `${this.formatDayString(day.date)} · ${day.visit_count} visit${day.visit_count === 1 ? '' : 's'}`;
     },
+    // One label per week-column, only on the week a new month actually
+    // starts in - matches the GitHub contributions graph's own convention,
+    // rather than a label on every column (illegible at this cell size) or
+    // a single fixed label per fortnight (wouldn't line up with real month
+    // boundaries).
+    heatmapMonthLabels() {
+      return this.heatmapWeeks().map((week) => {
+        const firstOfMonth = week.find((d) => d && d.date.endsWith('-01'));
+        if (!firstOfMonth) return '';
+        const [y, m] = firstOfMonth.date.split('-').map(Number);
+        return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'short' });
+      });
+    },
+    openHeatmapDay(day) {
+      if (!day) return;
+      this.switchTab('day');
+      this.goToDate(day.date);
+    },
 
     // ─── Places ───
     async loadPlaces() {
@@ -662,10 +706,16 @@ function waypoint() {
     async loadCities() {
       this.cities.loading = true;
       try {
-        const res = await fetch('/api/cities');
+        const res = await fetch(`/api/cities?page=${this.cities.page}`);
         this.cities.data = await res.json();
       } catch (e) { console.error('Failed to load cities', e); }
       finally { this.cities.loading = false; }
+    },
+    changeCitiesPage(delta) {
+      const next = this.cities.page + delta;
+      if (next < 1 || (this.cities.data && next > this.cities.data.total_pages)) return;
+      this.cities.page = next;
+      this.loadCities();
     },
     async openCity(cityName) {
       if (!cityName) return;

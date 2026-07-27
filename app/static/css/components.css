@@ -1,6 +1,21 @@
 /* Waypoint component styles - reads only --wp-* tokens (see tokens.css),
    never a raw colour, so this file is identical regardless of active theme. */
 
+[x-cloak] { display: none !important; }
+
+.resource-failure-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--wp-warn-bg);
+  color: var(--wp-warn);
+  border-bottom: 1px solid var(--wp-warn-border);
+  font-size: 13px;
+  text-align: center;
+}
+
 body {
   background-color: var(--wp-bg);
   background-image:
@@ -204,6 +219,7 @@ h1, h2, h3, .display {
 .pill-cat-entertainment         { background: color-mix(in srgb, var(--wp-cat-entertainment) 18%, transparent); color: var(--wp-cat-entertainment); border-color: var(--wp-cat-entertainment); }
 .pill-cat-parks-and-nature      { background: color-mix(in srgb, var(--wp-cat-parks) 18%, transparent); color: var(--wp-cat-parks); border-color: var(--wp-cat-parks); }
 .pill-cat-offices-and-services  { background: color-mix(in srgb, var(--wp-cat-offices) 18%, transparent); color: var(--wp-cat-offices); border-color: var(--wp-cat-offices); }
+.pill-cat-streets-and-roads  { background: color-mix(in srgb, var(--wp-cat-streets) 18%, transparent); color: var(--wp-cat-streets); border-color: var(--wp-cat-streets); }
 
 .pill-mode-walking  { background: color-mix(in srgb, var(--wp-mode-walking) 18%, transparent); color: var(--wp-mode-walking); border-color: var(--wp-mode-walking); }
 .pill-mode-cycling  { background: color-mix(in srgb, var(--wp-mode-cycling) 18%, transparent); color: var(--wp-mode-cycling); border-color: var(--wp-mode-cycling); }
@@ -246,10 +262,17 @@ h1, h2, h3, .display {
 /* Activity heatmap (GitHub-contributions style) - a week per column, a
    weekday per row, coloured by the accent colour at an opacity scaled to
    that day's visit count relative to the year's own busiest day. */
-.heatmap-grid { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 4px; }
+.heatmap-scroll { overflow-x: auto; padding-bottom: 4px; }
+.heatmap-grid { display: flex; gap: 3px; }
 .heatmap-week { display: flex; flex-direction: column; gap: 3px; }
 .heatmap-cell { width: 11px; height: 11px; border-radius: 2px; background: var(--wp-surface-2); }
 .heatmap-cell.empty-slot { visibility: hidden; }
+.heatmap-cell.clickable { cursor: pointer; }
+.heatmap-cell.clickable:hover { outline: 1px solid var(--wp-fg-muted); outline-offset: 1px; }
+.heatmap-months { display: flex; gap: 3px; }
+.heatmap-month-label { width: 11px; font-size: 10px; color: var(--wp-fg-muted); overflow: visible; white-space: nowrap; }
+.heatmap-weekday-labels, .heatmap-weekday-labels-spacer { display: flex; flex-direction: column; gap: 3px; width: 28px; flex-shrink: 0; }
+.heatmap-weekday-label { height: 11px; font-size: 10px; line-height: 11px; color: var(--wp-fg-muted); }
 
 /* Day view's history chart - a monthly visit-density graph across all
    recorded history, replacing an earlier one-bar-per-year strip that was

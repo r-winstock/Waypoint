@@ -38,14 +38,14 @@ PLACE_DEDUP_RADIUS_M = 300.0
 # pairs, cross-checked directly against the real data) turned up several
 # real, common OSM tag groups that had no bucket of their own: transit
 # infrastructure, banking/pharmacy, schools, nightlife, healthcare, cinemas/
-# theatres, and parks. Note honestly: a large remaining share of "Other" is
-# not a categorisation gap at all - a bare road (highway=residential etc),
-# a generic house/apartment building, or street furniture (a bench, a
-# postbox, a defibrillator) genuinely isn't a "place" in any meaningful
-# sense, just what a GPS point nearest-matched to when no real business was
-# there - no amount of extra categories reclassifies those into something
-# more specific, and they're deliberately left uncategorised rather than
-# inventing a bucket for "street furniture".
+# theatres, and parks, plus a dedicated "Streets and roads" bucket for bare
+# roads (highway=residential etc) and generic house/apartment buildings,
+# which turned out to be most of what was left in "Other" once the above
+# were split out. What's still genuinely left in "Other" after that is
+# street furniture (a bench, a postbox, a defibrillator) - not a "place" in
+# any meaningful sense, just what a GPS point nearest-matched to when
+# nothing else was there, deliberately left uncategorised rather than
+# inventing a bucket for it.
 CATEGORY_RULES: dict[str, dict[str, str] | str] = {
     "amenity": {
         "restaurant": "Food and drink",
@@ -114,7 +114,7 @@ CATEGORY_RULES: dict[str, dict[str, str] | str] = {
     },
     "sport": "Sports",
     "aeroway": {"aerodrome": "Airports"},
-    "railway": {"station": "Transport", "halt": "Transport", "tram_stop": "Transport"},
+    "railway": {"station": "Transport", "halt": "Transport", "tram_stop": "Transport", "platform": "Transport", "stop": "Transport"},
     "office": {
         "company": "Offices and services",
         "estate_agent": "Offices and services",
@@ -123,6 +123,21 @@ CATEGORY_RULES: dict[str, dict[str, str] | str] = {
         "insurance": "Offices and services",
     },
     "natural": {"beach": "Parks and nature", "wood": "Parks and nature", "water": "Parks and nature"},
+    # Bare roads/generic addresses - not a "place" in any meaningful sense,
+    # but common enough (the large majority of what was landing in "Other
+    # places") that a dedicated bucket is more honest than lumping a street
+    # in with genuinely uncategorisable places like street furniture.
+    "highway": {
+        "bus_stop": "Transport",
+        "residential": "Streets and roads",
+        "unclassified": "Streets and roads",
+        "pedestrian": "Streets and roads",
+        "tertiary": "Streets and roads",
+        "primary": "Streets and roads",
+        "secondary": "Streets and roads",
+    },
+    "place": {"house": "Streets and roads"},
+    "building": {"yes": "Streets and roads", "house": "Streets and roads", "apartments": "Streets and roads"},
 }
 
 
@@ -148,7 +163,7 @@ def _categorise_tags(tags: dict) -> str:
     """Same category rules as _categorise, but against a raw OSM tags dict
     (what Overpass returns) rather than Nominatim's single category/type
     pair - used by find_nearby_places."""
-    for key in ("amenity", "shop", "tourism", "historic", "leisure", "sport", "aeroway", "railway", "office", "natural"):
+    for key in ("amenity", "shop", "tourism", "historic", "leisure", "sport", "aeroway", "railway", "office", "natural", "highway", "place", "building"):
         if key in tags:
             cat = _categorise(key, tags[key])
             if cat != "Other places":
@@ -423,13 +438,25 @@ def resolve_place(
     return place
 
 
-def _reverse_geocode(lat: float, lon: float) -> dict | None:
+def _reverse_geocode(lat: float, lon: float, language: str | None = "en") -> dict | None:
+    """language="en" (the default for every live resolve) asks Nominatim to
+    translate administrative names (city/country) into English where it has
+    a translation - without it, Nominatim returns whatever language the
+    underlying OSM data itself was tagged in, which for many cities is the
+    local name (confirmed live: "Milano" instead of "Milan", "Éire /
+    Ireland" instead of "Ireland"). language=None is used by the one-off
+    backfill script re-resolving already-cached places, which passes the
+    English request explicitly and diffs the result against what's already
+    stored (the local form) rather than needing a second call here."""
     _throttle()
+    headers = {"User-Agent": USER_AGENT}
+    if language:
+        headers["Accept-Language"] = language
     try:
         resp = httpx.get(
             NOMINATIM_URL,
             params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 18, "addressdetails": 1},
-            headers={"User-Agent": USER_AGENT},
+            headers=headers,
             timeout=10.0,
         )
         resp.raise_for_status()
@@ -457,7 +484,9 @@ def search_places(query: str, near_lat: float | None = None, near_lon: float | N
 
     _throttle()
     try:
-        resp = httpx.get(NOMINATIM_SEARCH_URL, params=params, headers={"User-Agent": USER_AGENT}, timeout=10.0)
+        resp = httpx.get(
+            NOMINATIM_SEARCH_URL, params=params, headers={"User-Agent": USER_AGENT, "Accept-Language": "en"}, timeout=10.0
+        )
         resp.raise_for_status()
         results = resp.json()
     except (httpx.HTTPError, ValueError):

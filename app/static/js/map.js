@@ -191,7 +191,7 @@ function wpSlicePolyline(latlngs, startFrac, endFrac) {
 
 let _wpDayMapRenderToken = 0;
 
-async function wpRenderDayMap(map, points, timeline) {
+async function wpRenderDayMap(map, points, timeline, contextVisits = {}) {
   // Route fetches below are async and per-segment - if the day changes again
   // before they resolve, a stale route from the previous render must not get
   // drawn onto the new one.
@@ -249,8 +249,15 @@ async function wpRenderDayMap(map, points, timeline) {
     if (entry.type !== 'segment') continue;
     if (wpHasRawCoverage(points, entry.start_ts, entry.end_ts)) continue;
 
-    const prevVisit = [...timeline.slice(0, i)].reverse().find((e) => e.type === 'visit');
-    const nextVisit = timeline.slice(i + 1).find((e) => e.type === 'visit');
+    // A segment that starts before this day's first visit, or ends after
+    // its last one (an overnight arrival/departure - see day.py's
+    // context_visits), has no matching Visit in today's own timeline at
+    // all. Falls back to the nearest visit just outside the day so the
+    // segment still has somewhere to draw to, rather than being silently
+    // dropped from the map entirely (confirmed live: an overnight flight
+    // simply didn't appear).
+    const prevVisit = [...timeline.slice(0, i)].reverse().find((e) => e.type === 'visit') || contextVisits.before;
+    const nextVisit = timeline.slice(i + 1).find((e) => e.type === 'visit') || contextVisits.after;
     if (!prevVisit || !nextVisit) continue;
     segmentEntries.push({ entry, prevVisit, nextVisit });
   }

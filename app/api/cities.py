@@ -11,7 +11,10 @@ router = APIRouter()
 
 
 @router.get("/api/cities")
-def get_cities(session: Session = Depends(db_dependency)):
+def get_cities(page: int = 1, page_size: int = 24, session: Session = Depends(db_dependency)):
+    """Paginated the same way /api/trips is - a full list of every visited
+    city (hundreds, for a long-running history) rendering all its photo
+    cards at once was slow to load, the same problem already solved there."""
     rows = (
         session.query(
             Place.city,
@@ -22,6 +25,9 @@ def get_cities(session: Session = Depends(db_dependency)):
             # the strict majority, just a real value to distinguish e.g.
             # "Windsor, United Kingdom" from Windsor, Ontario.
             func.max(Place.country),
+            # Same reasoning - any one place's city_local is representative
+            # of this city (they'd all resolve to the same local name).
+            func.max(Place.city_local),
         )
         .join(Visit, Visit.place_id == Place.id)
         .filter(Place.city.isnot(None))
@@ -29,11 +35,19 @@ def get_cities(session: Session = Depends(db_dependency)):
         .order_by(func.max(Visit.end_ts).desc())
         .all()
     )
+    total_cities = len(rows)
+    start = (page - 1) * page_size
+    page_rows = rows[start : start + page_size]
+
     return {
         "cities": [
-            {"name": city, "place_count": place_count, "last_visit_ts": last_ts, "country": country}
-            for city, place_count, last_ts, country in rows
-        ]
+            {"name": city, "place_count": place_count, "last_visit_ts": last_ts, "country": country, "local_name": local_name}
+            for city, place_count, last_ts, country, local_name in page_rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total_cities": total_cities,
+        "total_pages": max(1, (total_cities + page_size - 1) // page_size),
     }
 
 
@@ -43,6 +57,7 @@ def get_city_detail(city_name: str, session: Session = Depends(db_dependency)):
         session.query(
             Place.id,
             Place.name,
+            Place.name_local,
             Place.category,
             Place.lat_round,
             Place.lon_round,
@@ -64,20 +79,28 @@ def get_city_detail(city_name: str, session: Session = Depends(db_dependency)):
         .limit(1)
         .scalar()
     )
+    city_local = (
+        session.query(Place.city_local)
+        .filter(Place.city == city_name, Place.city_local.isnot(None))
+        .limit(1)
+        .scalar()
+    )
 
     return {
         "city_name": city_name,
+        "city_local": city_local,
         "country": country,
         "places": [
             {
                 "id": place_id,
                 "name": name,
+                "name_local": name_local,
                 "category": category,
                 "lat": lat,
                 "lon": lon,
                 "visit_count": visit_count,
                 "last_visit_ts": last_ts,
             }
-            for place_id, name, category, lat, lon, visit_count, last_ts in rows
+            for place_id, name, name_local, category, lat, lon, visit_count, last_ts in rows
         ],
     }
