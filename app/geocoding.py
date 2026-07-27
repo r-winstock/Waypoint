@@ -32,6 +32,20 @@ ROUND_DP = 4
 # a city (e.g. two different Aldi branches) aren't wrongly merged.
 PLACE_DEDUP_RADIUS_M = 300.0
 
+# Expanded from the original 9 categories after finding live that "Other
+# places" held the large majority of resolved places (980 of ~1400) -
+# inspecting what was actually landing there (raw_json's category/type
+# pairs, cross-checked directly against the real data) turned up several
+# real, common OSM tag groups that had no bucket of their own: transit
+# infrastructure, banking/pharmacy, schools, nightlife, healthcare, cinemas/
+# theatres, and parks. Note honestly: a large remaining share of "Other" is
+# not a categorisation gap at all - a bare road (highway=residential etc),
+# a generic house/apartment building, or street furniture (a bench, a
+# postbox, a defibrillator) genuinely isn't a "place" in any meaningful
+# sense, just what a GPS point nearest-matched to when no real business was
+# there - no amount of extra categories reclassifies those into something
+# more specific, and they're deliberately left uncategorised rather than
+# inventing a bucket for "street furniture".
 CATEGORY_RULES: dict[str, dict[str, str] | str] = {
     "amenity": {
         "restaurant": "Food and drink",
@@ -41,6 +55,35 @@ CATEGORY_RULES: dict[str, dict[str, str] | str] = {
         "fast_food": "Food and drink",
         "food_court": "Food and drink",
         "ice_cream": "Food and drink",
+        "bank": "Banking and services",
+        "atm": "Banking and services",
+        "bureau_de_change": "Banking and services",
+        "post_office": "Banking and services",
+        "pharmacy": "Banking and services",
+        "school": "Education",
+        "college": "Education",
+        "university": "Education",
+        "kindergarten": "Education",
+        "library": "Education",
+        "bus_station": "Transport",
+        "bus_stop": "Transport",
+        "ferry_terminal": "Transport",
+        "fuel": "Transport",
+        "charging_station": "Transport",
+        "parking": "Transport",
+        "bicycle_parking": "Transport",
+        "car_rental": "Transport",
+        "taxi": "Transport",
+        "nightclub": "Nightlife",
+        "casino": "Nightlife",
+        "hospital": "Healthcare",
+        "clinic": "Healthcare",
+        "doctors": "Healthcare",
+        "dentist": "Healthcare",
+        "veterinary": "Healthcare",
+        "place_of_worship": "Culture",
+        "cinema": "Entertainment",
+        "theatre": "Entertainment",
     },
     "shop": "Shopping",
     "tourism": {
@@ -53,6 +96,9 @@ CATEGORY_RULES: dict[str, dict[str, str] | str] = {
         "gallery": "Culture",
         "artwork": "Culture",
         "attraction": "Culture",
+        "viewpoint": "Culture",
+        "theme_park": "Entertainment",
+        "zoo": "Entertainment",
     },
     "historic": "Culture",
     "leisure": {
@@ -61,9 +107,22 @@ CATEGORY_RULES: dict[str, dict[str, str] | str] = {
         "fitness_centre": "Sports",
         "pitch": "Sports",
         "golf_course": "Sports",
+        "park": "Parks and nature",
+        "garden": "Parks and nature",
+        "nature_reserve": "Parks and nature",
+        "playground": "Parks and nature",
     },
     "sport": "Sports",
     "aeroway": {"aerodrome": "Airports"},
+    "railway": {"station": "Transport", "halt": "Transport", "tram_stop": "Transport"},
+    "office": {
+        "company": "Offices and services",
+        "estate_agent": "Offices and services",
+        "government": "Offices and services",
+        "lawyer": "Offices and services",
+        "insurance": "Offices and services",
+    },
+    "natural": {"beach": "Parks and nature", "wood": "Parks and nature", "water": "Parks and nature"},
 }
 
 
@@ -76,11 +135,20 @@ def _categorise(osm_category: str | None, osm_type: str | None) -> str:
     return "Other places"
 
 
+def categorise_from_raw_json(raw_json_data: dict) -> str:
+    """Public entry point re-deriving a category from a Place's own stored
+    raw_json (Nominatim's reverse-geocode response, keyed the same way as
+    resolve_place's own live category/type read) - used to reclassify
+    existing places against an updated CATEGORY_RULES without re-querying
+    Nominatim at all, since the raw response was already saved."""
+    return _categorise(raw_json_data.get("category"), raw_json_data.get("type"))
+
+
 def _categorise_tags(tags: dict) -> str:
     """Same category rules as _categorise, but against a raw OSM tags dict
     (what Overpass returns) rather than Nominatim's single category/type
     pair - used by find_nearby_places."""
-    for key in ("amenity", "shop", "tourism", "historic", "leisure", "sport", "aeroway"):
+    for key in ("amenity", "shop", "tourism", "historic", "leisure", "sport", "aeroway", "railway", "office", "natural"):
         if key in tags:
             cat = _categorise(key, tags[key])
             if cat != "Other places":

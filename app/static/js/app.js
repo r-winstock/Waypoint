@@ -64,6 +64,14 @@ const CATEGORY_ICONS = {
   'Culture': '\u{1F3DB}',
   'Sports': '\u{26BD}',
   'Airports': '✈',
+  'Banking and services': '\u{1F3E6}',
+  'Education': '\u{1F393}',
+  'Transport': '\u{1F68C}',
+  'Nightlife': '\u{1F303}',
+  'Healthcare': '\u{1F3E5}',
+  'Entertainment': '\u{1F3AC}',
+  'Parks and nature': '\u{1F333}',
+  'Offices and services': '\u{1F3E2}',
   'Other places': '\u{1F4CD}',
 };
 
@@ -84,6 +92,14 @@ const CATEGORY_COLOR_VARS = {
   'Culture': 'culture',
   'Sports': 'sports',
   'Airports': 'airports',
+  'Banking and services': 'banking',
+  'Education': 'education',
+  'Transport': 'transport',
+  'Nightlife': 'nightlife',
+  'Healthcare': 'healthcare',
+  'Entertainment': 'entertainment',
+  'Parks and nature': 'parks',
+  'Offices and services': 'offices',
   'Other places': 'other',
 };
 
@@ -181,6 +197,40 @@ function waypoint() {
       } catch (e) { console.error('Failed to refresh image', e); }
       this.imageCacheBust[query] = (this.imageCacheBust[query] || 0) + 1;
     },
+    // Upload your own photo - the alternative to re-searching online, for
+    // when that finds nothing (or, worse, confidently finds the wrong
+    // place - a business-name search matching an unrelated company, or a
+    // "Windsor" search landing on Ontario instead of Berkshire). One
+    // shared hidden <input type=file> (see index.html) is reused for every
+    // card rather than one per card - triggerPhotoUpload just remembers
+    // which query the eventual file selection is for.
+    pendingUploadQuery: null,
+    pendingUploadGeo: false,
+    triggerPhotoUpload(query, geo) {
+      this.pendingUploadQuery = query;
+      this.pendingUploadGeo = !!geo;
+      this.$refs.photoUploadInput.click();
+    },
+    async onPhotoFileSelected(event) {
+      const file = event.target.files[0];
+      event.target.value = ''; // otherwise picking the same file twice in a row doesn't fire 'change' again
+      const query = this.pendingUploadQuery;
+      this.pendingUploadQuery = null;
+      if (!file || !query) return;
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        const params = new URLSearchParams({ q: query });
+        await fetch(`/api/images/upload?${params}`, { method: 'POST', body: form });
+      } catch (e) { console.error('Failed to upload photo', e); }
+      this.imageCacheBust[query] = (this.imageCacheBust[query] || 0) + 1;
+      // Each card's imgFailed is local x-data state, not reachable from
+      // here directly - this tells whichever card(s) currently showing
+      // this query to try displaying an image again, the same way a
+      // successful online refresh already does within its own click
+      // handler's scope.
+      window.dispatchEvent(new CustomEvent('wp-image-updated', { detail: { query } }));
+    },
 
     init() {
       this.applyTheme(this.theme);
@@ -250,6 +300,8 @@ function waypoint() {
       if (tab === 'day' && !this.day.data) this.loadDay();
       if (tab === 'trips' && !this.trips.data) this.loadTrips();
       if (tab === 'insights' && !this.insights.data) this.loadInsights();
+      if (tab === 'insights' && !this.insightsHighlights) this.loadInsightsHighlights();
+      if (tab === 'insights' && !this.heatmapData) this.loadHeatmap();
       if (tab === 'places' && !this.places.data) this.loadPlaces();
       if (tab === 'cities' && !this.cities.data) this.loadCities();
       if (tab === 'world' && !this.world.data) this.loadWorld();
@@ -524,6 +576,58 @@ function waypoint() {
       return `var(--wp-cat-${key})`;
     },
 
+    // ─── Insights: all-time highlights + activity heatmap ───
+    // Not scoped to insights.year/month - these are all-time records, loaded
+    // once (like day.overview) rather than re-fetched on every month change.
+    insightsHighlights: null,
+    async loadInsightsHighlights() {
+      try {
+        const res = await fetch('/api/insights/highlights');
+        this.insightsHighlights = await res.json();
+      } catch (e) { console.error('Failed to load insights highlights', e); }
+    },
+    formatDayString(dayStr) {
+      const [y, m, d] = dayStr.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    },
+
+    heatmapYear: new Date().getFullYear(),
+    heatmapData: null,
+    async loadHeatmap() {
+      try {
+        const res = await fetch(`/api/insights/heatmap/${this.heatmapYear}`);
+        this.heatmapData = await res.json();
+      } catch (e) { console.error('Failed to load heatmap', e); }
+    },
+    changeHeatmapYear(delta) {
+      this.heatmapYear += delta;
+      this.heatmapData = null;
+      this.loadHeatmap();
+    },
+    // GitHub-contributions-style grid: one column per week, one row per
+    // weekday (Monday first). Front-padded with null slots so day one of
+    // the year lines up under its real weekday rather than always starting
+    // at the grid's top-left regardless of what day 1 January actually was.
+    heatmapWeeks() {
+      if (!this.heatmapData) return [];
+      const days = this.heatmapData.days;
+      const max = Math.max(1, ...days.map((d) => d.visit_count));
+      const firstDate = new Date(days[0].date + 'T00:00:00');
+      const firstWeekday = (firstDate.getDay() + 6) % 7; // Sun=0..Sat=6 -> Mon=0..Sun=6
+      const padded = Array(firstWeekday).fill(null).concat(days.map((d) => ({ ...d, intensity: d.visit_count / max })));
+      const weeks = [];
+      for (let i = 0; i < padded.length; i += 7) weeks.push(padded.slice(i, i + 7));
+      return weeks;
+    },
+    heatmapCellStyle(day) {
+      if (!day || !day.visit_count) return '';
+      return `background: var(--wp-accent); opacity: ${(0.25 + day.intensity * 0.75).toFixed(2)}`;
+    },
+    heatmapCellTitle(day) {
+      if (!day) return '';
+      return `${this.formatDayString(day.date)} · ${day.visit_count} visit${day.visit_count === 1 ? '' : 's'}`;
+    },
+
     // ─── Places ───
     async loadPlaces() {
       this.places.loading = true;
@@ -583,6 +687,14 @@ function waypoint() {
       }));
       wpRenderPins(this.cities.detailMap, pins);
     },
+    // Same as openCity, but switches to the Cities tab first - used by
+    // World's Country detail city cards, which were deliberately left
+    // non-clickable earlier (crossing from the World tab into Cities felt
+    // like more state-juggling than it was worth) until asked for directly.
+    openCityFromCountry(cityName) {
+      this.switchTab('cities');
+      this.openCity(cityName);
+    },
 
     // ─── World ───
     async loadWorld() {
@@ -595,7 +707,7 @@ function waypoint() {
       finally { this.world.loading = false; }
     },
     renderWorldMap() {
-      if (!this.world.map) this.world.map = wpInitMap('world-map-container');
+      if (!this.world.map) this.world.map = wpInitMap('world-map-container', { minZoom: 0 });
       const visitedCodes = new Set(this.world.data.countries.map((c) => c.country_code).filter(Boolean));
       wpRenderWorldMap(this.world.map, visitedCodes);
     },

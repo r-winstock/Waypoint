@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import calendar
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import db_dependency
-from app.models import Place, TripSegment, Visit
+from app.models import Place, Trip, TripSegment, Visit
 
 router = APIRouter()
 
@@ -70,6 +71,98 @@ def _visit_totals(session: Session, start_ts: int, end_ts: int) -> dict[str, flo
     for category, v_start, v_end in rows:
         totals[category] += max(v_end - v_start, 0)
     return totals
+
+
+@router.get("/api/insights/highlights")
+def get_insights_highlights(session: Session = Depends(db_dependency)):
+    """All-time records, not scoped to any particular month - the tab's
+    monthly tiles were the whole of Insights before this, which read as
+    thin next to the rest of the app's now much richer views. A handful of
+    plain aggregate queries is plenty at a personal-device data scale (tens
+    of thousands of rows, not millions) - no need for anything fancier."""
+    total_visits = session.query(func.count(Visit.id)).scalar() or 0
+    total_distance_m = session.query(func.sum(TripSegment.distance_m)).scalar() or 0.0
+    total_countries = (
+        session.query(func.count(func.distinct(Place.country_code))).filter(Place.country_code.isnot(None)).scalar() or 0
+    )
+    total_cities = session.query(func.count(func.distinct(Place.city))).filter(Place.city.isnot(None)).scalar() or 0
+
+    day_expr = func.strftime("%Y-%m-%d", Visit.start_ts, "unixepoch")
+    busiest_day_row = (
+        session.query(day_expr.label("day"), func.count(Visit.id).label("cnt"))
+        .group_by("day")
+        .order_by(func.count(Visit.id).desc())
+        .first()
+    )
+
+    longest_trip_row = (
+        session.query(Trip.primary_city, Trip.primary_country, Trip.start_ts, Trip.end_ts)
+        .order_by((Trip.end_ts - Trip.start_ts).desc())
+        .first()
+    )
+
+    most_visited_row = (
+        session.query(Place.name, Place.city, func.count(Visit.id).label("cnt"))
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.name.isnot(None))
+        .group_by(Place.id)
+        .order_by(func.count(Visit.id).desc())
+        .first()
+    )
+
+    return {
+        "total_visits": total_visits,
+        "total_distance_m": total_distance_m,
+        "total_countries": total_countries,
+        "total_cities": total_cities,
+        "busiest_day": (
+            {"day": busiest_day_row.day, "visit_count": busiest_day_row.cnt} if busiest_day_row else None
+        ),
+        "longest_trip": (
+            {
+                "primary_city": longest_trip_row.primary_city,
+                "primary_country": longest_trip_row.primary_country,
+                "start_ts": longest_trip_row.start_ts,
+                "end_ts": longest_trip_row.end_ts,
+                "days": round((longest_trip_row.end_ts - longest_trip_row.start_ts) / 86400),
+            }
+            if longest_trip_row
+            else None
+        ),
+        "most_visited_place": (
+            {"name": most_visited_row.name, "city": most_visited_row.city, "visit_count": most_visited_row.cnt}
+            if most_visited_row
+            else None
+        ),
+    }
+
+
+@router.get("/api/insights/heatmap/{year}")
+def get_insights_heatmap(year: int, session: Session = Depends(db_dependency)):
+    """Daily visit counts for a calendar-heatmap (GitHub-contributions
+    style) of one year - every day of the year is returned, zero-filled,
+    same reasoning as the Day view's history chart: an evenly-spaced
+    timeline needs explicit zeros, not gaps silently skipped."""
+    start_ts = int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp())
+    end_ts = int(datetime(year + 1, 1, 1, tzinfo=timezone.utc).timestamp())
+    day_expr = func.strftime("%Y-%m-%d", Visit.start_ts, "unixepoch")
+    rows = (
+        session.query(day_expr.label("day"), func.count(Visit.id))
+        .filter(Visit.start_ts >= start_ts, Visit.start_ts < end_ts)
+        .group_by("day")
+        .all()
+    )
+    counts = dict(rows)
+
+    days = []
+    d = date(year, 1, 1)
+    one_day = timedelta(days=1)
+    last_day = date(year, 12, 31)
+    while d <= last_day:
+        key = d.isoformat()
+        days.append({"date": key, "visit_count": counts.get(key, 0)})
+        d += one_day
+    return {"year": year, "days": days}
 
 
 @router.get("/api/insights/{year}/{month}")

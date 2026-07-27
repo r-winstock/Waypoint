@@ -280,11 +280,14 @@
                     <div class="banner" :class="!imgFailed && (d.primary_city || d.primary_country) && 'has-photo'">
                       <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(d.primary_city || d.primary_country, null, true, d.primary_city && d.primary_country)" @error="imgFailed = true">
                       <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                      <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true, d.primary_city && d.primary_country); imgFailed = false" title="Refresh photo">
-                        <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-                      </button>
-                      <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true, d.primary_city && d.primary_country); imgFailed = false">
-                        <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                      <div class="card-photo-actions" :class="!imgFailed && 'hover-only'" @wp-image-updated.window="if ($event.detail.query === (d.primary_city || d.primary_country)) imgFailed = false">
+                        <button type="button" class="btn-icon" @click.stop="refreshCardImage(d.primary_city || d.primary_country, true, d.primary_city && d.primary_country).then(() => imgFailed = false)" title="Search online again">
+                          <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                        </button>
+                        <button type="button" class="btn-icon" @click.stop="triggerPhotoUpload(d.primary_city || d.primary_country, true)" title="Upload your own photo">
+                          <i data-lucide="upload" class="w-3 h-3"></i>
+                        </button>
+                        <span class="missing-label" x-show="imgFailed">Load photo</span>
                       </div>
                       <span class="count-badge" x-show="d.trip_count > 1" x-text="d.trip_count + ' visits'"></span>
                       <div class="title" x-text="d.primary_city || d.primary_country || 'Trip'"></div>
@@ -379,6 +382,65 @@
 
     <!-- ═══════════ INSIGHTS ═══════════ -->
     <div x-show="tab==='insights'">
+      <h2 class="text-base font-semibold mb-2">All-time highlights</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" x-show="insightsHighlights">
+        <div class="stat-tile">
+          <div class="label">Total visits</div>
+          <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_visits : '—'"></div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">Total distance</div>
+          <div class="value" x-text="insightsHighlights ? formatMiles(insightsHighlights.total_distance_m) : '—'"></div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">Countries visited</div>
+          <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_countries : '—'"></div>
+        </div>
+        <div class="stat-tile">
+          <div class="label">Cities visited</div>
+          <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_cities : '—'"></div>
+        </div>
+        <template x-if="insightsHighlights && insightsHighlights.busiest_day">
+          <div class="stat-tile">
+            <div class="label">Busiest day ever</div>
+            <div class="value" style="font-size: 18px" x-text="formatDayString(insightsHighlights.busiest_day.day)"></div>
+            <div class="detail" x-text="insightsHighlights.busiest_day.visit_count + ' visits'"></div>
+          </div>
+        </template>
+        <template x-if="insightsHighlights && insightsHighlights.longest_trip">
+          <div class="stat-tile">
+            <div class="label">Longest trip</div>
+            <div class="value" style="font-size: 18px" x-text="insightsHighlights.longest_trip.primary_city || insightsHighlights.longest_trip.primary_country || 'Trip'"></div>
+            <div class="detail" x-text="insightsHighlights.longest_trip.days + ' day' + (insightsHighlights.longest_trip.days === 1 ? '' : 's')"></div>
+          </div>
+        </template>
+        <template x-if="insightsHighlights && insightsHighlights.most_visited_place">
+          <div class="stat-tile">
+            <div class="label">Most-visited place</div>
+            <div class="value" style="font-size: 18px" x-text="insightsHighlights.most_visited_place.name"></div>
+            <div class="detail" x-text="insightsHighlights.most_visited_place.visit_count + ' visits' + (insightsHighlights.most_visited_place.city ? ' · ' + insightsHighlights.most_visited_place.city : '')"></div>
+          </div>
+        </template>
+      </div>
+
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-base font-semibold">Activity heatmap</h2>
+        <div class="flex items-center gap-2">
+          <button class="btn-icon" @click="changeHeatmapYear(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+          <span class="text-sm tabular" x-text="heatmapYear"></span>
+          <button class="btn-icon" @click="changeHeatmapYear(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+        </div>
+      </div>
+      <div class="heatmap-grid mb-6">
+        <template x-for="(week, wi) in heatmapWeeks()" :key="wi">
+          <div class="heatmap-week">
+            <template x-for="(day, di) in week" :key="di">
+              <div class="heatmap-cell" :class="!day && 'empty-slot'" :style="heatmapCellStyle(day)" :title="heatmapCellTitle(day)"></div>
+            </template>
+          </div>
+        </template>
+      </div>
+
       <div class="flex items-center justify-between mb-4">
         <button class="btn-icon" @click="changeMonth(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
         <div class="text-lg font-semibold display" x-text="monthLabel()"></div>
@@ -473,11 +535,14 @@
               <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: pointer" @click="togglePlaceVisits(p.id)">
                 <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(p.name || p.city, p.city, false, p.city)" @error="imgFailed = true">
                 <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(p.name || p.city, false, p.city); imgFailed = false" title="Refresh photo">
-                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-                </button>
-                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(p.name || p.city, false, p.city); imgFailed = false">
-                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                <div class="card-photo-actions" :class="!imgFailed && 'hover-only'" @wp-image-updated.window="if ($event.detail.query === (p.name || p.city)) imgFailed = false">
+                  <button type="button" class="btn-icon" @click.stop="refreshCardImage(p.name || p.city, false, p.city).then(() => imgFailed = false)" title="Search online again">
+                    <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                  </button>
+                  <button type="button" class="btn-icon" @click.stop="triggerPhotoUpload(p.name || p.city, false)" title="Upload your own photo">
+                    <i data-lucide="upload" class="w-3 h-3"></i>
+                  </button>
+                  <span class="missing-label" x-show="imgFailed">Load photo</span>
                 </div>
                 <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; z-index: 2" title="This place is wrong? Fix it"
                         @click.stop="openPlaceEdit(p.id, p.name, places.category, p.city, null, null)">
@@ -515,11 +580,14 @@
               <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" @click="openCity(c.name)">
                 <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true, c.country)" @error="imgFailed = true">
                 <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(c.name, true, c.country); imgFailed = false" title="Refresh photo">
-                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-                </button>
-                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(c.name, true, c.country); imgFailed = false">
-                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                <div class="card-photo-actions" :class="!imgFailed && 'hover-only'" @wp-image-updated.window="if ($event.detail.query === c.name) imgFailed = false">
+                  <button type="button" class="btn-icon" @click.stop="refreshCardImage(c.name, true, c.country).then(() => imgFailed = false)" title="Search online again">
+                    <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                  </button>
+                  <button type="button" class="btn-icon" @click.stop="triggerPhotoUpload(c.name, true)" title="Upload your own photo">
+                    <i data-lucide="upload" class="w-3 h-3"></i>
+                  </button>
+                  <span class="missing-label" x-show="imgFailed">Load photo</span>
                 </div>
                 <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
                 <div class="card-photo-content">
@@ -549,11 +617,14 @@
               <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: default">
                 <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(p.name || cities.detail.city_name, cities.detail.city_name, false, cities.detail.country)" @error="imgFailed = true">
                 <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(p.name || cities.detail.city_name, false, cities.detail.country); imgFailed = false" title="Refresh photo">
-                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-                </button>
-                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(p.name || cities.detail.city_name, false, cities.detail.country); imgFailed = false">
-                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                <div class="card-photo-actions" :class="!imgFailed && 'hover-only'" @wp-image-updated.window="if ($event.detail.query === (p.name || cities.detail.city_name)) imgFailed = false">
+                  <button type="button" class="btn-icon" @click.stop="refreshCardImage(p.name || cities.detail.city_name, false, cities.detail.country).then(() => imgFailed = false)" title="Search online again">
+                    <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                  </button>
+                  <button type="button" class="btn-icon" @click.stop="triggerPhotoUpload(p.name || cities.detail.city_name, false)" title="Upload your own photo">
+                    <i data-lucide="upload" class="w-3 h-3"></i>
+                  </button>
+                  <span class="missing-label" x-show="imgFailed">Load photo</span>
                 </div>
                 <button class="btn-icon" style="position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; z-index: 2" title="This place is wrong? Fix it"
                         @click.stop="openPlaceEdit(p.id, p.name, p.category, cities.detail.city_name, null, null)">
@@ -610,14 +681,17 @@
 
           <div class="grid-cards">
             <template x-for="c in world.detail.cities" :key="c.name">
-              <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: default">
+              <div class="grid-card grid-card--photo" :class="!imgFailed && 'has-photo'" x-data="{imgFailed: false}" style="cursor: pointer" @click="openCityFromCountry(c.name)">
                 <img x-show="!imgFailed" class="card-photo-img" :src="imageUrl(c.name, null, true, world.detail.country_name)" @error="imgFailed = true">
                 <div x-show="!imgFailed" class="card-photo-scrim"></div>
-                <button class="btn-icon card-photo-refresh" x-show="!imgFailed" @click.stop="refreshCardImage(c.name, true, world.detail.country_name); imgFailed = false" title="Refresh photo">
-                  <i data-lucide="refresh-cw" class="w-3 h-3"></i>
-                </button>
-                <div class="card-photo-missing" x-show="imgFailed" @click.stop="refreshCardImage(c.name, true, world.detail.country_name); imgFailed = false">
-                  <i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Load photo
+                <div class="card-photo-actions" :class="!imgFailed && 'hover-only'" @wp-image-updated.window="if ($event.detail.query === c.name) imgFailed = false">
+                  <button type="button" class="btn-icon" @click.stop="refreshCardImage(c.name, true, world.detail.country_name).then(() => imgFailed = false)" title="Search online again">
+                    <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                  </button>
+                  <button type="button" class="btn-icon" @click.stop="triggerPhotoUpload(c.name, true)" title="Upload your own photo">
+                    <i data-lucide="upload" class="w-3 h-3"></i>
+                  </button>
+                  <span class="missing-label" x-show="imgFailed">Load photo</span>
                 </div>
                 <span class="count-badge" x-text="c.place_count + ' place' + (c.place_count === 1 ? '' : 's')"></span>
                 <div class="card-photo-content">
@@ -756,6 +830,11 @@
       </div>
     </div>
   </div>
+
+  <!-- Single shared file input for every card's "upload your own photo"
+       button - triggerPhotoUpload() just remembers which query the eventual
+       file selection is for, rather than each card needing its own input. -->
+  <input type="file" accept="image/*" x-ref="photoUploadInput" class="hidden" @change="onPhotoFileSelected($event)">
 </div>
 
 <script>

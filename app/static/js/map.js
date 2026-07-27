@@ -87,7 +87,7 @@ function wpAddLayer(map, layer) {
   return layer;
 }
 
-function wpInitMap(containerId) {
+function wpInitMap(containerId, opts = {}) {
   // maxBounds was tried alongside noWrap to fix the repeated-world tiles,
   // but it fought panning/zooming near the antimeridian hard enough that
   // New Zealand (~175°E) became unreachable, confirmed live. noWrap on the
@@ -95,7 +95,15 @@ function wpInitMap(containerId) {
   // real map instead of duplicate tiles) - maxBounds was only ever a nice-
   // to-have on top of that, not required, so dropped rather than keep
   // tuning it against this edge case.
-  const map = L.map(containerId, { scrollWheelZoom: false, minZoom: 2 });
+  //
+  // minZoom defaults to 2 (fine for the Day/Trips/City/Country pin maps,
+  // which only ever fit a small cluster of points) but the World choropleth
+  // needs to override it lower - confirmed live that minZoom:2 was the
+  // actual reason its default view could never show enough vertical range
+  // to include New Zealand or the southern half of Australia, regardless of
+  // what fitBounds/setView was asked for: the map was refusing to zoom out
+  // past 2 no matter what.
+  const map = L.map(containerId, { scrollWheelZoom: false, minZoom: opts.minZoom ?? 2 });
   const layers = Object.fromEntries(Object.entries(WP_BASE_LAYERS).map(([name, make]) => [name, make()]));
   layers.Streets.addTo(map);
   L.control.layers(layers).addTo(map);
@@ -141,6 +149,44 @@ async function wpFetchRailRoute(segmentId, fromLat, fromLon, toLat, toLon) {
 // but no underlying GPS log at all).
 function wpHasRawCoverage(points, startTs, endTs) {
   return points.some((p) => p.tst >= startTs && p.tst <= endTs);
+}
+
+function wpHaversineM([lat1, lon1], [lat2, lon2]) {
+  const r = 6371000;
+  const p1 = (lat1 * Math.PI) / 180;
+  const p2 = (lat2 * Math.PI) / 180;
+  const dp = ((lat2 - lat1) * Math.PI) / 180;
+  const dl = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * r * Math.asin(Math.sqrt(a));
+}
+
+// Cumulative-distance-based sub-line, not index-based - the points aren't
+// necessarily evenly spaced, so slicing by array position alone would give
+// each segment a disproportionate share of a bendy path.
+function wpSlicePolyline(latlngs, startFrac, endFrac) {
+  if (latlngs.length < 2) return latlngs;
+  const cum = [0];
+  for (let i = 1; i < latlngs.length; i++) cum.push(cum[i - 1] + wpHaversineM(latlngs[i - 1], latlngs[i]));
+  const total = cum[cum.length - 1];
+  if (total === 0) return latlngs;
+
+  const pointAtDist = (dist) => {
+    for (let i = 1; i < cum.length; i++) {
+      if (cum[i] >= dist) {
+        const t = cum[i] > cum[i - 1] ? (dist - cum[i - 1]) / (cum[i] - cum[i - 1]) : 0;
+        const [lat1, lon1] = latlngs[i - 1];
+        const [lat2, lon2] = latlngs[i];
+        return [lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t];
+      }
+    }
+    return latlngs[latlngs.length - 1];
+  };
+
+  const startDist = startFrac * total;
+  const endDist = endFrac * total;
+  const middle = latlngs.filter((_, i) => cum[i] > startDist && cum[i] < endDist);
+  return [pointAtDist(startDist), ...middle, pointAtDist(endDist)];
 }
 
 let _wpDayMapRenderToken = 0;
@@ -197,7 +243,7 @@ async function wpRenderDayMap(map, points, timeline) {
   // 10+ seconds via Overpass, and with several such segments on one day the
   // old code (which awaited each fetch before finishing the render at all)
   // left the map showing a stale/wrong view for 20-30 seconds.
-  const toUpgrade = [];
+  const segmentEntries = [];
   for (let i = 0; i < timeline.length; i++) {
     const entry = timeline[i];
     if (entry.type !== 'segment') continue;
@@ -206,11 +252,44 @@ async function wpRenderDayMap(map, points, timeline) {
     const prevVisit = [...timeline.slice(0, i)].reverse().find((e) => e.type === 'visit');
     const nextVisit = timeline.slice(i + 1).find((e) => e.type === 'visit');
     if (!prevVisit || !nextVisit) continue;
+    segmentEntries.push({ entry, prevVisit, nextVisit });
+  }
 
-    const color = wpModeColor(entry.mode);
-    const straight = [[prevVisit.lat, prevVisit.lon], [nextVisit.lat, nextVisit.lon]];
-    const line = wpAddLayer(map, wpCasedPolyline(straight, color, { opacity: 0.7, dashArray: '6 6' }));
-    toUpgrade.push({ entry, prevVisit, nextVisit, color, line });
+  // Two (or more) segments with no Visit between them - e.g. a train
+  // immediately followed by a taxi, with no captured stop in between -
+  // resolve to the exact same prevVisit/nextVisit pair, since that lookup
+  // only ever finds the nearest visit either side. Drawing each one across
+  // the *full* flanking-visit distance made a real 2.4-mile taxi hop's line
+  // fully overlap the 48-mile train leg right before it, confirmed live.
+  // Grouping them and splitting the shared straight-line span by each
+  // segment's own reported distance is a far more honest picture, even
+  // though the actual split point is still a guess.
+  const groups = [];
+  for (const se of segmentEntries) {
+    const last = groups[groups.length - 1];
+    if (last && last[0].prevVisit === se.prevVisit && last[0].nextVisit === se.nextVisit) last.push(se);
+    else groups.push([se]);
+  }
+
+  const toUpgrade = [];
+  for (const group of groups) {
+    const { prevVisit, nextVisit } = group[0];
+    const fullStraight = [[prevVisit.lat, prevVisit.lon], [nextVisit.lat, nextVisit.lon]];
+    const totalDist = group.reduce((sum, se) => sum + (se.entry.distance_m || 0), 0) || 1;
+    let cumFrac = 0;
+    for (const se of group) {
+      const color = wpModeColor(se.entry.mode);
+      const frac = (se.entry.distance_m || 0) / totalDist;
+      const startFrac = cumFrac;
+      const endFrac = group.length > 1 ? cumFrac + frac : 1;
+      cumFrac = endFrac;
+      const straightSlice = group.length > 1 ? wpSlicePolyline(fullStraight, startFrac, endFrac) : fullStraight;
+      const line = wpAddLayer(map, wpCasedPolyline(straightSlice, color, { opacity: 0.7, dashArray: '6 6' }));
+      // Only an unambiguous (ungrouped) segment gets a real routing attempt -
+      // a split segment's "endpoint" is itself a guess, so a routed path to/
+      // from a made-up point isn't any more accurate than the straight line.
+      if (group.length === 1) toUpgrade.push({ entry: se.entry, prevVisit, nextVisit, color, line });
+    }
   }
 
   // animate:false throughout this file's fitBounds/setView calls - confirmed
@@ -290,14 +369,15 @@ async function wpRenderWorldMap(map, visitedCodes) {
     },
   });
   wpAddLayer(map, layer);
-  // Fits to a fixed, deliberately-chosen world view rather than the actual
-  // layer bounds. Confirmed live that fitting to the real data (which spans
-  // to Antarctica at -85° and the high Arctic at +84°) forces a far more
-  // zoomed-in fit than fitting a normal populated-world view would need, in
-  // a container this wide-and-short - the mathematically "correct" tight
-  // fit only showed ~40°N to ~53°S by default, cutting off all of Europe,
-  // Russia and Canada. Excluding the Antarctic tail and extreme Arctic
-  // (rarely anyone's "visited" territory anyway) gives a default view that
-  // actually shows the populated world.
-  map.fitBounds([[-58, -180], [78, 180]], { animate: false });
+  // Explicit setView, not fitBounds - fitBounds proved unreliable for this
+  // map across several attempts (fitting the real data's bounds, at -85°/
+  // +84°, cut off Europe/Russia/Canada; a fixed [-58,78] bounds request
+  // still only rendered -26° to +64° - the map's minZoom:2 was silently
+  // preventing it from ever zooming out far enough regardless of what was
+  // requested, confirmed live New Zealand and half of Australia stayed
+  // clipped either way). wpInitMap now creates this specific map with
+  // minZoom:0, and this is a directly-tested zoom/center that comfortably
+  // covers pole-to-pole -70°/+76° in this container's actual aspect ratio -
+  // confirmed live to include New Zealand and all of Australia.
+  map.setView([10, 0], 1, { animate: false });
 }

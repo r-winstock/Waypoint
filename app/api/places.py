@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import db_dependency
-from app.geocoding import find_nearby_places, find_similar_places, merge_places_into, search_places
+from app.geocoding import categorise_from_raw_json, find_nearby_places, find_similar_places, merge_places_into, search_places
 from app.models import Place, Visit
 
 router = APIRouter()
@@ -21,6 +23,36 @@ def get_place_categories(session: Session = Depends(db_dependency)):
         .all()
     )
     return {"categories": [{"name": category, "count": count} for category, count in rows]}
+
+
+@router.post("/api/places/reclassify")
+def reclassify_places(session: Session = Depends(db_dependency)):
+    """Re-derives category for every "Other places" row against the current
+    CATEGORY_RULES, using each place's own already-stored raw_json rather
+    than re-querying Nominatim - a one-off catch-up whenever CATEGORY_RULES
+    gains new buckets, run manually rather than on a schedule since it only
+    ever needs to do anything the moment rules actually change. Never
+    touches a place the user has manually corrected (manually_corrected),
+    and can't do anything for a place with no raw_json at all (most of the
+    Google Timeline import - it never had OSM tags to categorise from in
+    the first place, so there's nothing here to re-derive)."""
+    candidates = (
+        session.query(Place)
+        .filter(Place.category == "Other places", Place.raw_json.isnot(None), Place.manually_corrected.is_(False))
+        .all()
+    )
+    reclassified = 0
+    for place in candidates:
+        try:
+            data = json.loads(place.raw_json)
+        except ValueError:
+            continue
+        new_category = categorise_from_raw_json(data)
+        if new_category != "Other places":
+            place.category = new_category
+            reclassified += 1
+    session.commit()
+    return {"checked": len(candidates), "reclassified": reclassified}
 
 
 @router.get("/api/places/detail/{place_id}/nearby")

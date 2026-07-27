@@ -196,6 +196,14 @@ h1, h2, h3, .display {
 .pill-cat-other-places     { background: color-mix(in srgb, var(--wp-cat-other) 18%, transparent); color: var(--wp-cat-other); border-color: var(--wp-cat-other); }
 .pill-cat-home             { background: color-mix(in srgb, var(--wp-cat-home) 18%, transparent); color: var(--wp-cat-home); border-color: var(--wp-cat-home); }
 .pill-cat-work             { background: color-mix(in srgb, var(--wp-cat-work) 18%, transparent); color: var(--wp-cat-work); border-color: var(--wp-cat-work); }
+.pill-cat-banking-and-services  { background: color-mix(in srgb, var(--wp-cat-banking) 18%, transparent); color: var(--wp-cat-banking); border-color: var(--wp-cat-banking); }
+.pill-cat-education             { background: color-mix(in srgb, var(--wp-cat-education) 18%, transparent); color: var(--wp-cat-education); border-color: var(--wp-cat-education); }
+.pill-cat-transport             { background: color-mix(in srgb, var(--wp-cat-transport) 18%, transparent); color: var(--wp-cat-transport); border-color: var(--wp-cat-transport); }
+.pill-cat-nightlife             { background: color-mix(in srgb, var(--wp-cat-nightlife) 18%, transparent); color: var(--wp-cat-nightlife); border-color: var(--wp-cat-nightlife); }
+.pill-cat-healthcare            { background: color-mix(in srgb, var(--wp-cat-healthcare) 18%, transparent); color: var(--wp-cat-healthcare); border-color: var(--wp-cat-healthcare); }
+.pill-cat-entertainment         { background: color-mix(in srgb, var(--wp-cat-entertainment) 18%, transparent); color: var(--wp-cat-entertainment); border-color: var(--wp-cat-entertainment); }
+.pill-cat-parks-and-nature      { background: color-mix(in srgb, var(--wp-cat-parks) 18%, transparent); color: var(--wp-cat-parks); border-color: var(--wp-cat-parks); }
+.pill-cat-offices-and-services  { background: color-mix(in srgb, var(--wp-cat-offices) 18%, transparent); color: var(--wp-cat-offices); border-color: var(--wp-cat-offices); }
 
 .pill-mode-walking  { background: color-mix(in srgb, var(--wp-mode-walking) 18%, transparent); color: var(--wp-mode-walking); border-color: var(--wp-mode-walking); }
 .pill-mode-cycling  { background: color-mix(in srgb, var(--wp-mode-cycling) 18%, transparent); color: var(--wp-mode-cycling); border-color: var(--wp-mode-cycling); }
@@ -234,6 +242,14 @@ h1, h2, h3, .display {
 }
 .insights-delta.up { color: #16a34a; }
 .insights-delta.down { color: #dc2626; }
+
+/* Activity heatmap (GitHub-contributions style) - a week per column, a
+   weekday per row, coloured by the accent colour at an opacity scaled to
+   that day's visit count relative to the year's own busiest day. */
+.heatmap-grid { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 4px; }
+.heatmap-week { display: flex; flex-direction: column; gap: 3px; }
+.heatmap-cell { width: 11px; height: 11px; border-radius: 2px; background: var(--wp-surface-2); }
+.heatmap-cell.empty-slot { visibility: hidden; }
 
 /* Day view's history chart - a monthly visit-density graph across all
    recorded history, replacing an earlier one-bar-per-year strip that was
@@ -321,30 +337,35 @@ h1, h2, h3, .display {
 }
 .grid-card--flag .card-flag-content { position: relative; z-index: 1; padding: 16px; width: 100%; }
 
-.card-photo-refresh {
+/* Photo-card action cluster: a "search online again" and an "upload your
+   own" button together, since a single refresh-only action turned out to
+   only ever redo the same automatic search - confirmed live that's no help
+   when that search finds nothing, or (worse) confidently finds the wrong
+   place's photo (Windsor, Ontario for a Berkshire visit). Hover-only once a
+   photo exists (top-left, the same spot the old solo refresh icon used);
+   always visible, with a text label, while there's no photo to show yet -
+   that state needs to be obvious, not hidden behind a hover affordance that
+   only makes sense once a photo already loaded. Positioned top-left rather
+   than bottom-left deliberately: bottom-left is also where the card's title
+   sits, bottom-anchored in the same flex box, and the two overlapped
+   directly there (confirmed live). */
+.card-photo-actions {
   position: absolute; top: 12px; left: 14px; z-index: 2;
-  width: 26px; height: 26px; opacity: 0; transition: opacity 0.15s;
+  display: flex; align-items: center; gap: 6px;
+}
+.card-photo-actions.hover-only { opacity: 0; transition: opacity 0.15s; }
+.grid-card--photo:hover .card-photo-actions.hover-only, .trip-card:hover .card-photo-actions.hover-only { opacity: 1; }
+.card-photo-actions .btn-icon {
+  width: 26px; height: 26px;
   background: rgba(0, 0, 0, 0.4); border-color: rgba(255, 255, 255, 0.3); color: #fff;
 }
-.grid-card--photo:hover .card-photo-refresh, .trip-card:hover .card-photo-refresh { opacity: 1; }
-
-/* Shown instead of the (hover-only) refresh icon when there's no photo to
-   refresh yet - that state needs to be obvious and always visible, not
-   hidden behind a hover affordance that only makes sense once a photo has
-   already loaded. Confirmed live: major, well-documented places (Split,
-   Windsor) had no photo and no visible way to ask for one.
-   Positioned top-left (the refresh icon's own spot, empty while it's
-   hidden) rather than bottom-left - bottom-left is also where the card's
-   title sits, bottom-anchored in the same flex box, so the two overlapped
-   directly (confirmed live: "Load photo" rendered behind the card title). */
-.card-photo-missing {
-  position: absolute; top: 12px; left: 14px; z-index: 2;
+.card-photo-actions .missing-label {
   display: flex; align-items: center; gap: 4px;
   padding: 4px 10px; border-radius: 999px; cursor: pointer;
   background: var(--wp-surface-2); border: 1px dashed var(--wp-border-strong);
   color: var(--wp-fg-muted); font-size: 12px;
 }
-.card-photo-missing:hover { color: var(--wp-fg-primary); border-color: var(--wp-accent); }
+.card-photo-actions .missing-label:hover { color: var(--wp-fg-primary); border-color: var(--wp-accent); }
 
 /* ─── Day timeline ─── */
 .day-row {

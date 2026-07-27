@@ -152,6 +152,30 @@ def _download_image(url: str, key: str) -> str | None:
     return str(path)
 
 
+# A hint is a country name as the app itself uses it (from Nominatim, e.g.
+# "United Kingdom") - but Wikipedia's own description text for a town almost
+# never spells that out ("Town in Berkshire, England"), so a plain substring
+# check silently never matches for these and the wrong-country candidate
+# ranked higher by Wikipedia's own search order wins instead (confirmed
+# live: "Windsor" resolved to Windsor, Ontario's skyline for a Berkshire
+# visit). Not exhaustive - only covers hints likely for this app's own use
+# (a personal, UK-based timeline) - a hint not listed here still gets a
+# plain substring match, which most countries pass fine unprompted.
+COUNTRY_HINT_ALIASES: dict[str, list[str]] = {
+    "united kingdom": ["united kingdom", "england", "scotland", "wales", "northern ireland", "great britain", " uk"],
+    "united states": ["united states", " usa", "u.s.a", "u.s."],
+    "netherlands": ["netherlands", "holland"],
+    "czechia": ["czechia", "czech republic"],
+    "myanmar": ["myanmar", "burma"],
+}
+
+
+def _hint_matches(hint: str, description: str) -> bool:
+    description_lower = description.lower()
+    aliases = COUNTRY_HINT_ALIASES.get(hint.lower(), [hint.lower()])
+    return any(alias in description_lower for alias in aliases)
+
+
 def get_or_fetch_image(
     session: Session, query: str, force: bool = False, geo: bool = False, hint: str | None = None
 ) -> CachedImage:
@@ -159,14 +183,15 @@ def get_or_fetch_image(
     the fetch even over a previously cached result (the "refresh" action).
     geo=True asserts this query is always a real place (a Trip/City name, or
     a Place's city fallback) - see _wikipedia_page_info for why that's
-    treated differently from an arbitrary business/place name. hint is an
-    optional disambiguator (a country name, for a city query) - a candidate
-    whose Wikipedia description mentions it (e.g. "Town in Berkshire,
-    England" for hint "United Kingdom"... though note this is a plain
-    substring check, so it only catches a hint that literally appears in the
-    description - it won't catch every country/region naming mismatch) is
-    preferred over an earlier-ranked candidate that doesn't, e.g. "Windsor,
-    Ontario" outranks "Windsor, Berkshire" in Wikipedia's own search order."""
+    treated differently from an arbitrary business/place name.
+
+    hint is an optional disambiguator (a country name, for a city query).
+    When given, it's a hard requirement, not a soft preference - a wrong-
+    country photo (confirmed live: Windsor, Ontario shown for a Berkshire
+    visit) is worse than no photo at all, the same principle already
+    applied to plain business-name matches (see _plausible_match). Without
+    a hint (the query has no known country context), the first plausible,
+    coordinate-bearing candidate is used same as before."""
     key = _slugify(query)
     cached = session.get(CachedImage, key)
     if cached is not None and not force:
@@ -175,17 +200,18 @@ def get_or_fetch_image(
     titles = _wikipedia_search_titles(query)
 
     fallback_page: WikiPage | None = None
-    hint_lower = hint.lower() if hint else None
+    hint_confirmed_page: WikiPage | None = None
     for title in titles:
         page = _wikipedia_page_info(title, require_coordinates=geo)
         if page is None:
             continue
         if fallback_page is None:
             fallback_page = page
-        if hint_lower and hint_lower in page.description.lower():
-            fallback_page = page
+        if hint and _hint_matches(hint, page.description):
+            hint_confirmed_page = page
             break
-    image_url = fallback_page.image_url if fallback_page else None
+    chosen_page = hint_confirmed_page if hint else fallback_page
+    image_url = chosen_page.image_url if chosen_page else None
     local_path = _download_image(image_url, key) if image_url else None
 
     if image_url and not local_path:
@@ -207,6 +233,37 @@ def get_or_fetch_image(
     cached.source_url = image_url
     cached.image_path = local_path
     cached.found = local_path is not None
+    cached.fetched_at = int(time.time())
+    session.flush()
+    return cached
+
+
+# Only a handful of common image types are worth trusting the extension
+# from - anything else falls back to .jpg (matches _download_image's own
+# fallback), rather than trusting an arbitrary client-supplied filename.
+_ALLOWED_UPLOAD_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+
+def save_uploaded_image(session: Session, query: str, filename: str, content: bytes) -> CachedImage:
+    """User-supplied photo, for when no automatic search finds the right
+    one (or finds a confidently wrong one, e.g. Windsor Ontario for a
+    Berkshire visit) - always overwrites any existing cached result for
+    this query, the same as a manual refresh does."""
+    key = _slugify(query)
+    ext = Path(filename).suffix.lower()
+    if ext not in _ALLOWED_UPLOAD_EXT:
+        ext = ".jpg"
+    path = IMAGES_DIR / f"{key}{ext}"
+    path.write_bytes(content)
+
+    cached = session.get(CachedImage, key)
+    if cached is None:
+        cached = CachedImage(key=key, query=query)
+        session.add(cached)
+    cached.query = query
+    cached.source_url = None
+    cached.image_path = str(path)
+    cached.found = True
     cached.fetched_at = int(time.time())
     session.flush()
     return cached
