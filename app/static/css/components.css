@@ -220,13 +220,20 @@ h1, h2, h3, .display {
 .stat-tile .label { font-size: 13px; color: var(--wp-fg-muted); }
 .stat-tile .detail { font-size: 12px; color: var(--wp-fg-dim); margin-top: 2px; }
 
-.sparkline-bar {
-  display: inline-block;
-  width: 6px;
-  background: var(--wp-accent);
-  border-radius: 2px 2px 0 0;
-  vertical-align: bottom;
+/* Insights tile icon + trend chart - the same area+line visual language as
+   the Day view's history chart, at tile scale, replacing a plain bar
+   sparkline that read as noticeably plainer than the rest of the app. */
+.insights-tile-icon {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
 }
+.insights-sparkline { width: 100%; height: 32px; display: block; }
+.insights-delta {
+  font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: var(--wp-radius-pill);
+  background: var(--wp-surface-3); color: var(--wp-fg-muted);
+}
+.insights-delta.up { color: #16a34a; }
+.insights-delta.down { color: #dc2626; }
 
 /* Day view's history chart - a monthly visit-density graph across all
    recorded history, replacing an earlier one-bar-per-year strip that was
@@ -243,7 +250,6 @@ h1, h2, h3, .display {
 .history-chart-area { fill: var(--wp-accent); opacity: 0.18; }
 .history-chart-line { fill: none; stroke: var(--wp-accent); stroke-width: 2.5; }
 .history-chart-peak-dot { fill: var(--wp-accent-light); stroke: var(--wp-surface-1); stroke-width: 1.5; }
-.history-chart-peak-label { fill: var(--wp-fg-muted); font-size: 12px; font-family: var(--wp-font-body); }
 .history-chart-axis-label { color: var(--wp-fg-dim); font-size: 11px; font-family: var(--wp-font-body); white-space: nowrap; }
 .history-chart-playhead { stroke: var(--wp-fg-primary); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; pointer-events: none; }
 
@@ -326,9 +332,13 @@ h1, h2, h3, .display {
    refresh yet - that state needs to be obvious and always visible, not
    hidden behind a hover affordance that only makes sense once a photo has
    already loaded. Confirmed live: major, well-documented places (Split,
-   Windsor) had no photo and no visible way to ask for one. */
+   Windsor) had no photo and no visible way to ask for one.
+   Positioned top-left (the refresh icon's own spot, empty while it's
+   hidden) rather than bottom-left - bottom-left is also where the card's
+   title sits, bottom-anchored in the same flex box, so the two overlapped
+   directly (confirmed live: "Load photo" rendered behind the card title). */
 .card-photo-missing {
-  position: absolute; bottom: 12px; left: 14px; z-index: 2;
+  position: absolute; top: 12px; left: 14px; z-index: 2;
   display: flex; align-items: center; gap: 4px;
   padding: 4px 10px; border-radius: 999px; cursor: pointer;
   background: var(--wp-surface-2); border: 1px dashed var(--wp-border-strong);
@@ -388,6 +398,20 @@ h1, h2, h3, .display {
 #country-detail-map-container, #city-detail-map-container {
   height: 320px; border-radius: var(--wp-radius-card); border: 1px solid var(--wp-border); overflow: hidden;
 }
+/* Day view's own map wants to be much taller than the compact overview/
+   detail maps elsewhere - it's the dominant element of a two-column layout
+   now, not a small accent above a list. The extra specificity (id+class)
+   deliberately overrides the shared 320px rule above for this one map only. */
+#map-container.day-map { height: min(65vh, 640px); }
+
+/* Day view: map (taller, left) + stat tiles/timeline (scrollable, right) -
+   collapses to a single stacked column on narrow screens where side-by-side
+   would leave either pane too cramped to use. */
+.day-columns { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .day-columns { grid-template-columns: 1fr; } }
+.day-info-col { max-height: min(65vh, 640px); overflow-y: auto; padding-right: 6px; }
+@media (max-width: 900px) { .day-info-col { max-height: none; overflow-y: visible; } }
+
 .leaflet-popup-content-wrapper { background: var(--wp-map-popup-bg); color: var(--wp-map-popup-fg); border-radius: 8px; }
 .leaflet-popup-content { font-family: var(--wp-font-body); font-size: 13px; }
 .leaflet-popup-content b { font-family: var(--wp-font-display); font-weight: 400; color: var(--wp-map-popup-accent); }

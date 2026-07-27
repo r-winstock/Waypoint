@@ -69,6 +69,24 @@ const CATEGORY_ICONS = {
 
 const CATEGORY_OPTIONS = Object.keys(CATEGORY_ICONS);
 
+// --wp-cat-* token suffixes (theme-atlas.css/theme-voyage.css) don't match
+// slugify(category) 1:1 (e.g. "Food and drink" -> token "food", not
+// "food-and-drink" - the pill-cat-* classes already handle that mismatch
+// with a dedicated class per category; this is the same mapping for
+// Insights' per-category sparkline colour, which needs the raw var name
+// rather than a class).
+const CATEGORY_COLOR_VARS = {
+  'Home': 'home',
+  'Work': 'work',
+  'Food and drink': 'food',
+  'Shopping': 'shopping',
+  'Hotels': 'hotels',
+  'Culture': 'culture',
+  'Sports': 'sports',
+  'Airports': 'airports',
+  'Other places': 'other',
+};
+
 const MODE_ICONS = {
   walking: 'footprints',
   cycling: 'bike',
@@ -191,11 +209,30 @@ function waypoint() {
       if (this.trips.detailMap) { this.trips.detailMap.remove(); this.trips.detailMap = null; }
       if (this.cities.detailMap) { this.cities.detailMap.remove(); this.cities.detailMap = null; }
       if (this.world.detailMap) { this.world.detailMap.remove(); this.world.detailMap = null; }
+      // Returning to the Trips/World overview has exactly the same problem
+      // as above, one level up: its own map's container is also destroyed
+      // and recreated by the x-if that hides/shows the overview while a
+      // detail is open, confirmed live as a completely blank overview map
+      // after coming back from a trip. Only torn down/re-rendered when a
+      // detail was actually open, so this never runs pointlessly on every
+      // popstate.
+      const wasTripDetail = !!this.trips.detail;
+      const wasCountryDetail = !!this.world.detail;
       this.trips.detail = null;
       this.cities.detail = null;
       this.world.detail = null;
       this.places.category = null;
       this.places.categoryData = null;
+      if (wasTripDetail && this.trips.map) {
+        this.trips.map.remove();
+        this.trips.map = null;
+        this.$nextTick(() => this.renderTripsMap());
+      }
+      if (wasCountryDetail && this.world.map) {
+        this.world.map.remove();
+        this.world.map = null;
+        this.$nextTick(() => this.renderWorldMap());
+      }
     },
 
     setTheme(t) {
@@ -455,9 +492,36 @@ function waypoint() {
     monthLabel() {
       return new Date(this.insights.year, this.insights.month - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     },
-    sparklineHeights(trend) {
+    // Small area+line trend chart per tile, in the same visual language as
+    // the Day view's history chart (rather than the plain bar sparkline
+    // this replaces) - ties Insights into the same design family instead of
+    // reading as noticeably plainer than every other tab, per feedback.
+    // viewBox is 0-100 wide, 0-32 tall regardless of point count.
+    sparklinePath(trend, kind) {
       const max = Math.max(1, ...trend);
-      return trend.map((v) => Math.max(4, Math.round((v / max) * 32)));
+      const n = trend.length;
+      const pts = trend.map((v, i) => [n > 1 ? (i / (n - 1)) * 100 : 50, 32 - (v / max) * 28]);
+      if (kind === 'area') {
+        const top = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' L ');
+        return `M ${pts[0][0].toFixed(1)},32 L ${top} L ${pts[pts.length - 1][0].toFixed(1)},32 Z`;
+      }
+      return pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+    },
+    // Month-on-month change, for a small up/down indicator next to the
+    // value - trend's last element is always the month currently being
+    // viewed (see app/api/insights.py's _step_back), so trend[-2] is the
+    // one immediately before it. null when there's nothing to compare
+    // against (no data last month), rather than showing a meaningless
+    // "+inf%" or dividing by zero.
+    trendDelta(trend) {
+      const current = trend[trend.length - 1] || 0;
+      const previous = trend[trend.length - 2] || 0;
+      if (!previous) return null;
+      return Math.round(((current - previous) / previous) * 100);
+    },
+    categoryColorVar(category) {
+      const key = CATEGORY_COLOR_VARS[category] || 'other';
+      return `var(--wp-cat-${key})`;
     },
 
     // ─── Places ───

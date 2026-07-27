@@ -110,11 +110,14 @@
                  @pointerup="chartPointerUp()" @pointerleave="chartPointerLeave()">
               <path :d="chartAreaPath()" class="history-chart-area"></path>
               <path :d="chartLinePath()" class="history-chart-line"></path>
+              <!-- Peak marker is just a dot, not a floating text label - a
+                   label here read as stray/disconnected text, and sat right
+                   on top of the hover caption above whenever both happened
+                   to land in the same corner (confirmed live). The
+                   "Busiest month" stat tile below already says the same
+                   thing without competing for space on the chart itself. -->
               <circle x-show="chartPeakPoint()" :cx="chartPeakPoint() && chartPeakPoint().x" :cy="chartPeakPoint() && chartPeakPoint().y"
                       r="4" class="history-chart-peak-dot"></circle>
-              <text x-show="chartPeakPoint()" :x="chartPeakPoint() && chartPeakPoint().x" :y="chartPeakPoint() && Math.max(12, chartPeakPoint().y - 10)"
-                    text-anchor="middle" class="history-chart-peak-label"
-                    x-text="chartPeakPoint() && (chartMonthLabel(chartPeakPoint().month.month) + ' · ' + chartPeakPoint().month.visit_count)"></text>
               <line x-show="chartHover" :x1="chartHover && chartHover.x" :x2="chartHover && chartHover.x" y1="0" y2="200" class="history-chart-playhead"></line>
             </svg>
             <div class="history-chart-axis" style="position: absolute; left: 0; right: 0; bottom: 0; height: 16px; pointer-events: none">
@@ -147,106 +150,110 @@
       </template>
 
       <template x-if="day.data">
-        <div>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            <template x-for="s in dayStatModes()" :key="s.mode">
-              <div class="stat-tile">
-                <div class="label capitalize" x-text="s.mode"></div>
-                <div class="value" x-text="formatMiles(s.distance_m)"></div>
-                <div class="detail" x-text="formatDuration(s.duration_s)"></div>
-              </div>
-            </template>
-            <div class="stat-tile">
-              <div class="label">Visits</div>
-              <div class="value" x-text="day.data.stats.visits"></div>
-              <div class="detail">places stayed</div>
+        <div class="day-columns">
+          <div class="day-map-col">
+            <div id="map-container" class="day-map"></div>
+            <div class="text-xs mt-3 flex items-center gap-4 flex-wrap" style="color: var(--wp-fg-dim)">
+              <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px solid currentColor"></span> Recorded GPS path</span>
+              <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px dashed currentColor"></span> Estimated route (no GPS log for that stretch)</span>
+              <span>Line colour shows the mode of travel</span>
             </div>
           </div>
 
-          <div id="map-container" class="mb-3"></div>
-          <div class="text-xs mb-5 flex items-center gap-4 flex-wrap" style="color: var(--wp-fg-dim)">
-            <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px solid currentColor"></span> Recorded GPS path</span>
-            <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px dashed currentColor"></span> Estimated route (no GPS log for that stretch)</span>
-            <span>Line colour shows the mode of travel</span>
-          </div>
-
-          <template x-if="!day.data.timeline.length">
-            <div class="empty-state">No location data for this day yet.</div>
-          </template>
-
-          <div>
-            <template x-for="entry in day.data.timeline" :key="entry.type + '-' + entry.id">
-              <div class="day-row">
-                <div class="flex flex-col items-center">
-                  <div class="timeline-badge" :style="entry.type==='visit' ? '' : `background: var(--wp-mode-${entry.mode}); border-color: var(--wp-mode-${entry.mode})`">
-                    <i x-show="entry.type==='segment'" :data-lucide="modeIcon(entry.mode)" class="w-3.5 h-3.5" style="color: white"></i>
-                    <span x-show="entry.type==='visit'" x-text="categoryIcon(entry.category)" style="font-size: 14px; line-height: 1"></span>
-                  </div>
-                  <div class="line" :style="`height: ${entryLineHeight(entry.start_ts, entry.end_ts)}px`"></div>
+          <div class="day-info-col">
+            <div class="grid grid-cols-2 gap-3 mb-4">
+              <template x-for="s in dayStatModes()" :key="s.mode">
+                <div class="stat-tile">
+                  <div class="label capitalize" x-text="s.mode"></div>
+                  <div class="value" x-text="formatMiles(s.distance_m)"></div>
+                  <div class="detail" x-text="formatDuration(s.duration_s)"></div>
                 </div>
-                <div class="flex-1 pb-2">
-                  <template x-if="entry.type==='visit'">
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <div class="font-semibold" x-text="entry.place_name || 'Unnamed place'"></div>
-                        <button class="btn-icon" style="width: 24px; height: 24px" title="This place is wrong? Fix it"
-                                @click="openPlaceEdit(entry.place_id, entry.place_name, entry.category, entry.city, null, null)">
-                          <i data-lucide="pencil" class="w-3 h-3"></i>
-                        </button>
-                        <button class="btn-icon" style="width: 24px; height: 24px" title="Merge into previous visit" x-show="canMergeUp(entry)"
-                                @click="mergeWithPrevious(entry)">
-                          <i data-lucide="git-merge" class="w-3 h-3"></i>
-                        </button>
-                        <button class="btn-icon" style="width: 24px; height: 24px" title="Delete this visit" @click="deleteVisit(entry)">
-                          <i data-lucide="trash-2" class="w-3 h-3"></i>
-                        </button>
-                      </div>
-                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTime(entry.start_ts) + ' – ' + formatTime(entry.end_ts)].filter(Boolean).join(' · ')"></div>
-                      <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
-                    </div>
-                  </template>
-                  <template x-if="entry.type==='segment'">
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <!-- Options are static markup, not a nested x-for - modeOptions
-                             never changes at runtime, and a select+x-model whose options
-                             come from a template inside this same x-for/x-if nesting raced
-                             Alpine's own initial render (confirmed live: every row selected
-                             "walking", its first option, regardless of the segment's real
-                             mode - the option list wasn't populated yet when the value was
-                             first applied). Plain static options sidestep that entirely.
-                             :value + @change rather than x-model - confirmed live that
-                             x-model's own change handler and this element's @change didn't
-                             both fire from the same change event, so updateSegmentMode()
-                             never actually ran despite the visible selection updating. -->
-                        <select class="field-input capitalize" style="display: inline-block; width: auto; padding: 2px 6px; font-size: 13px"
-                                title="Wrong mode? Change it" :value="entry.mode" @change="updateSegmentMode(entry, $event.target.value)">
-                          <option value="walking">walking</option>
-                          <option value="cycling">cycling</option>
-                          <option value="driving">driving</option>
-                          <option value="taxi">taxi</option>
-                          <option value="bus">bus</option>
-                          <option value="train">train</option>
-                          <option value="subway">subway</option>
-                          <option value="tram">tram</option>
-                          <option value="ferry">ferry</option>
-                          <option value="boating">boating</option>
-                          <option value="flying">flying</option>
-                        </select>
-                        <button class="btn-icon" style="width: 24px; height: 24px" title="This was actually a stop - convert to a visit"
-                                @click="openConvertSegment(entry)">
-                          <i data-lucide="map-pin-plus" class="w-3 h-3"></i>
-                        </button>
-                        <button class="btn-icon" style="width: 24px; height: 24px" title="Delete this segment" @click="deleteSegment(entry)">
-                          <i data-lucide="trash-2" class="w-3 h-3"></i>
-                        </button>
-                      </div>
-                      <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatMiles(entry.distance_m) + ' · ' + formatDuration(entry.duration_s)"></div>
-                    </div>
-                  </template>
-                </div>
+              </template>
+              <div class="stat-tile">
+                <div class="label">Visits</div>
+                <div class="value" x-text="day.data.stats.visits"></div>
+                <div class="detail">places stayed</div>
               </div>
+            </div>
+
+            <template x-if="!day.data.timeline.length">
+              <div class="empty-state">No location data for this day yet.</div>
             </template>
+
+            <div>
+              <template x-for="entry in day.data.timeline" :key="entry.type + '-' + entry.id">
+                <div class="day-row">
+                  <div class="flex flex-col items-center">
+                    <div class="timeline-badge" :style="entry.type==='visit' ? '' : `background: var(--wp-mode-${entry.mode}); border-color: var(--wp-mode-${entry.mode})`">
+                      <i x-show="entry.type==='segment'" :data-lucide="modeIcon(entry.mode)" class="w-3.5 h-3.5" style="color: white"></i>
+                      <span x-show="entry.type==='visit'" x-text="categoryIcon(entry.category)" style="font-size: 14px; line-height: 1"></span>
+                    </div>
+                    <div class="line" :style="`height: ${entryLineHeight(entry.start_ts, entry.end_ts)}px`"></div>
+                  </div>
+                  <div class="flex-1 pb-2">
+                    <template x-if="entry.type==='visit'">
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <div class="font-semibold" x-text="entry.place_name || 'Unnamed place'"></div>
+                          <button class="btn-icon" style="width: 24px; height: 24px" title="This place is wrong? Fix it"
+                                  @click="openPlaceEdit(entry.place_id, entry.place_name, entry.category, entry.city, null, null)">
+                            <i data-lucide="pencil" class="w-3 h-3"></i>
+                          </button>
+                          <button class="btn-icon" style="width: 24px; height: 24px" title="Merge into previous visit" x-show="canMergeUp(entry)"
+                                  @click="mergeWithPrevious(entry)">
+                            <i data-lucide="git-merge" class="w-3 h-3"></i>
+                          </button>
+                          <button class="btn-icon" style="width: 24px; height: 24px" title="Delete this visit" @click="deleteVisit(entry)">
+                            <i data-lucide="trash-2" class="w-3 h-3"></i>
+                          </button>
+                        </div>
+                        <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTime(entry.start_ts) + ' – ' + formatTime(entry.end_ts)].filter(Boolean).join(' · ')"></div>
+                        <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
+                      </div>
+                    </template>
+                    <template x-if="entry.type==='segment'">
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <!-- Options are static markup, not a nested x-for - modeOptions
+                               never changes at runtime, and a select+x-model whose options
+                               come from a template inside this same x-for/x-if nesting raced
+                               Alpine's own initial render (confirmed live: every row selected
+                               "walking", its first option, regardless of the segment's real
+                               mode - the option list wasn't populated yet when the value was
+                               first applied). Plain static options sidestep that entirely.
+                               :value + @change rather than x-model - confirmed live that
+                               x-model's own change handler and this element's @change didn't
+                               both fire from the same change event, so updateSegmentMode()
+                               never actually ran despite the visible selection updating. -->
+                          <select class="field-input capitalize" style="display: inline-block; width: auto; padding: 2px 6px; font-size: 13px"
+                                  title="Wrong mode? Change it" :value="entry.mode" @change="updateSegmentMode(entry, $event.target.value)">
+                            <option value="walking">walking</option>
+                            <option value="cycling">cycling</option>
+                            <option value="driving">driving</option>
+                            <option value="taxi">taxi</option>
+                            <option value="bus">bus</option>
+                            <option value="train">train</option>
+                            <option value="subway">subway</option>
+                            <option value="tram">tram</option>
+                            <option value="ferry">ferry</option>
+                            <option value="boating">boating</option>
+                            <option value="flying">flying</option>
+                          </select>
+                          <button class="btn-icon" style="width: 24px; height: 24px" title="This was actually a stop - convert to a visit"
+                                  @click="openConvertSegment(entry)">
+                            <i data-lucide="map-pin-plus" class="w-3 h-3"></i>
+                          </button>
+                          <button class="btn-icon" style="width: 24px; height: 24px" title="Delete this segment" @click="deleteSegment(entry)">
+                            <i data-lucide="trash-2" class="w-3 h-3"></i>
+                          </button>
+                        </div>
+                        <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="formatMiles(entry.distance_m) + ' · ' + formatDuration(entry.duration_s)"></div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
           </div>
         </div>
       </template>
@@ -383,17 +390,25 @@
           <h2 class="text-base font-semibold mb-2">Travel</h2>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
             <template x-for="(t, mode) in insights.data.travel" :key="mode">
-              <div class="stat-tile flex items-center justify-between">
-                <div>
-                  <div class="label capitalize" x-text="mode"></div>
-                  <div class="value" x-text="formatMiles(t.distance_m)"></div>
-                  <div class="detail" x-text="formatDuration(t.duration_s)"></div>
+              <div class="stat-tile insights-tile">
+                <div class="flex items-center gap-3 mb-2">
+                  <div class="insights-tile-icon" :style="`background: var(--wp-mode-${mode})`">
+                    <i :data-lucide="modeIcon(mode)" class="w-4 h-4" style="color: #fff"></i>
+                  </div>
+                  <div class="flex-1">
+                    <div class="label capitalize" x-text="mode"></div>
+                    <div class="flex items-baseline gap-2">
+                      <div class="value" x-text="formatMiles(t.distance_m)"></div>
+                      <span class="insights-delta" x-show="trendDelta(t.trend) !== null" :class="trendDelta(t.trend) > 0 ? 'up' : (trendDelta(t.trend) < 0 ? 'down' : '')"
+                            x-text="trendDelta(t.trend) !== null ? (trendDelta(t.trend) > 0 ? '+' : '') + trendDelta(t.trend) + '%' : ''"></span>
+                    </div>
+                    <div class="detail" x-text="formatDuration(t.duration_s)"></div>
+                  </div>
                 </div>
-                <div class="flex items-end gap-1" style="height: 32px">
-                  <template x-for="(h, idx) in sparklineHeights(t.trend)" :key="idx">
-                    <div class="sparkline-bar" :style="`height:${h}px; background: var(--wp-mode-${mode})`"></div>
-                  </template>
-                </div>
+                <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="insights-sparkline">
+                  <path :d="sparklinePath(t.trend, 'area')" :style="`fill: var(--wp-mode-${mode}); opacity: 0.18`"></path>
+                  <path :d="sparklinePath(t.trend, 'line')" :style="`fill: none; stroke: var(--wp-mode-${mode}); stroke-width: 2`"></path>
+                </svg>
               </div>
             </template>
             <template x-if="!Object.keys(insights.data.travel).length">
@@ -404,17 +419,24 @@
           <h2 class="text-base font-semibold mb-2">Visits</h2>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
             <template x-for="(v, category) in insights.data.visits" :key="category">
-              <div class="stat-tile flex items-center justify-between">
-                <div>
-                  <div class="label" x-text="category"></div>
-                  <div class="value" x-text="formatDuration(v.duration_s)"></div>
-                  <button class="text-xs mt-1" style="color: var(--wp-accent-light)" @click="switchTab('places'); openCategory(category)">See places</button>
+              <div class="stat-tile insights-tile" style="cursor: pointer" @click="switchTab('places'); openCategory(category)">
+                <div class="flex items-center gap-3 mb-2">
+                  <div class="insights-tile-icon" :style="`background: ${categoryColorVar(category)}`">
+                    <span style="font-size: 16px; line-height: 1" x-text="categoryIcon(category)"></span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="label" x-text="category"></div>
+                    <div class="flex items-baseline gap-2">
+                      <div class="value" x-text="formatDuration(v.duration_s)"></div>
+                      <span class="insights-delta" x-show="trendDelta(v.trend) !== null" :class="trendDelta(v.trend) > 0 ? 'up' : (trendDelta(v.trend) < 0 ? 'down' : '')"
+                            x-text="trendDelta(v.trend) !== null ? (trendDelta(v.trend) > 0 ? '+' : '') + trendDelta(v.trend) + '%' : ''"></span>
+                    </div>
+                  </div>
                 </div>
-                <div class="flex items-end gap-1" style="height: 32px">
-                  <template x-for="(h, idx) in sparklineHeights(v.trend)" :key="idx">
-                    <div class="sparkline-bar" :style="`height:${h}px`"></div>
-                  </template>
-                </div>
+                <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="insights-sparkline">
+                  <path :d="sparklinePath(v.trend, 'area')" :style="`fill: ${categoryColorVar(category)}; opacity: 0.18`"></path>
+                  <path :d="sparklinePath(v.trend, 'line')" :style="`fill: none; stroke: ${categoryColorVar(category)}; stroke-width: 2`"></path>
+                </svg>
               </div>
             </template>
           </div>

@@ -189,7 +189,15 @@ async function wpRenderDayMap(map, points, timeline) {
   });
 
   // Route lines between consecutive visits, for whichever segments aren't
-  // already covered by the raw-point polyline above.
+  // already covered by the raw-point polyline above. Straight dashed lines
+  // are drawn synchronously for all of them right away, so the map is fully
+  // visible and correctly framed immediately - a routed/rail-snapped
+  // upgrade is fetched separately afterwards, per segment, without blocking
+  // on it. Confirmed live: an uncached train segment's rail lookup can take
+  // 10+ seconds via Overpass, and with several such segments on one day the
+  // old code (which awaited each fetch before finishing the render at all)
+  // left the map showing a stale/wrong view for 20-30 seconds.
+  const toUpgrade = [];
   for (let i = 0; i < timeline.length; i++) {
     const entry = timeline[i];
     if (entry.type !== 'segment') continue;
@@ -202,7 +210,22 @@ async function wpRenderDayMap(map, points, timeline) {
     const color = wpModeColor(entry.mode);
     const straight = [[prevVisit.lat, prevVisit.lon], [nextVisit.lat, nextVisit.lon]];
     const line = wpAddLayer(map, wpCasedPolyline(straight, color, { opacity: 0.7, dashArray: '6 6' }));
+    toUpgrade.push({ entry, prevVisit, nextVisit, color, line });
+  }
 
+  // animate:false throughout this file's fitBounds/setView calls - confirmed
+  // live that an animated fitBounds can silently fail to actually reach its
+  // target zoom/center in this environment (the map settles back at an
+  // earlier, wrong view instead), the same class of issue previously found
+  // with maxBounds fighting an animated setView near the antimeridian.
+  if (bounds.length) map.fitBounds(bounds, { padding: [24, 24], animate: false });
+  else map.setView([51.5, -0.1], 6, { animate: false });
+
+  // Fired concurrently, not one-at-a-time - the map's already fully drawn
+  // at this point, so there's no render-order dependency between them, and
+  // both Overpass (rail) and OSRM (road) calls are still self-throttled
+  // server-side/rate-limit-conscious regardless of how many arrive together.
+  toUpgrade.forEach(async ({ entry, prevVisit, nextVisit, color, line }) => {
     const routed = RAIL_MODES.has(entry.mode)
       ? await wpFetchRailRoute(entry.id, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon)
       : await wpFetchRoute(entry.mode, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon);
@@ -215,10 +238,7 @@ async function wpRenderDayMap(map, points, timeline) {
       // is the only remaining signal for that now colour is mode-only.
       wpAddLayer(map, wpCasedPolyline(routed, color, { dashArray: '4 8' }));
     }
-  }
-
-  if (bounds.length) map.fitBounds(bounds, { padding: [24, 24] });
-  else map.setView([51.5, -0.1], 6);
+  });
 }
 
 function wpRenderPins(map, pins) {
@@ -231,8 +251,8 @@ function wpRenderPins(map, pins) {
     if (p.label) marker.bindPopup(p.label);
     wpAddLayer(map, marker);
   });
-  if (latlngs.length) map.fitBounds(latlngs, { padding: [24, 24] });
-  else map.setView([51.5, -0.1], 6);
+  if (latlngs.length) map.fitBounds(latlngs, { padding: [24, 24], animate: false });
+  else map.setView([51.5, -0.1], 6, { animate: false });
 }
 
 // World view's choropleth. countries.geo.json (bundled, ~250KB simplified
@@ -270,5 +290,14 @@ async function wpRenderWorldMap(map, visitedCodes) {
     },
   });
   wpAddLayer(map, layer);
-  map.fitBounds(layer.getBounds());
+  // Fits to a fixed, deliberately-chosen world view rather than the actual
+  // layer bounds. Confirmed live that fitting to the real data (which spans
+  // to Antarctica at -85° and the high Arctic at +84°) forces a far more
+  // zoomed-in fit than fitting a normal populated-world view would need, in
+  // a container this wide-and-short - the mathematically "correct" tight
+  // fit only showed ~40°N to ~53°S by default, cutting off all of Europe,
+  // Russia and Canada. Excluding the Antarctic tail and extreme Arctic
+  // (rarely anyone's "visited" territory anyway) gives a default view that
+  // actually shows the populated world.
+  map.fitBounds([[-58, -180], [78, 180]], { animate: false });
 }
