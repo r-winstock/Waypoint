@@ -136,22 +136,27 @@ def nearby_photos(
     except (httpx.HTTPError, ValueError):
         return []
 
-    # Deduped by hash - a photo with multiple indexed file variants (RAW+JPEG,
-    # a Live Photo's image+video pair) can otherwise appear twice in one
-    # response with an identical uid. The map plots duplicates harmlessly
-    # (see wpGroupPhotosByLocation, keyed by coordinate not identity), but
-    # the gallery strip's own Alpine x-for is keyed by uid - the same class
-    # of bug found live in the World country list (a duplicate/undefined
-    # :key throws hard enough to blank the *entire* list, not just the
-    # duplicate row), so this is worth guarding against here rather than
-    # only in the template.
+    # Deduped by UID, not Hash - confirmed live (via the exact JSON PhotoPrism
+    # returned) that a photo with two matching file variants (a Live Photo's
+    # image+video pair, in this case) comes back as two rows sharing one
+    # identical UID but two different Hash values. An earlier version of
+    # this function deduped on Hash, which doesn't catch that case at all
+    # (the two rows have genuinely different hashes) - the gallery strip's
+    # Alpine x-for is keyed on uid, so the duplicate uid was still throwing
+    # hard enough to blank the *entire* gallery (the same failure mode
+    # found live in the World country list), even after that first,
+    # wrongly-keyed dedup attempt. The map itself was never affected -
+    # wpGroupPhotosByLocation groups by coordinate, not identity, so a
+    # duplicate uid there just harmlessly counts as two photos in one
+    # marker's badge.
     results = []
-    seen_hashes: set[str] = set()
+    seen_uids: set[str] = set()
     for p in photos or []:
         photo_hash = p.get("Hash")
-        if not photo_hash or photo_hash in seen_hashes:
+        photo_uid = p.get("UID")
+        if not photo_hash or not photo_uid or photo_uid in seen_uids:
             continue
-        seen_hashes.add(photo_hash)
+        seen_uids.add(photo_uid)
         # PhotoPrism marshals a photo with no GPS EXIF as Lat: 0, Lng: 0
         # (Go's zero value for an unset float field), not as a null/omitted
         # field - confirmed live this plotted a UK photo with no location
@@ -164,7 +169,7 @@ def nearby_photos(
             p_lat = p_lon = None
         results.append(
             {
-                "uid": p.get("UID"),
+                "uid": photo_uid,
                 "taken_at": p.get("TakenAt"),
                 "lat": p_lat,
                 "lon": p_lon,
