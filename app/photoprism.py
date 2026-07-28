@@ -76,8 +76,14 @@ def _thumb_url(base: str, preview_token: str, photo_hash: str, size: str = "tile
     return f"{base}/api/v1/t/{photo_hash}/{preview_token}/{size}"
 
 
-def _photo_page_url(base: str, uid: str | None) -> str | None:
-    return f"{base}/library/photo/{uid}" if uid else None
+def _photo_page_url(base: str, photo_hash: str | None) -> str | None:
+    """PhotoPrism has no stable single-photo permalink route (confirmed via
+    its own frontend router - photo view is a modal opened from within a
+    browse/search list, not a dedicated URL). Deep-linking into its search
+    view filtered to this photo's own hash (a supported search filter, and
+    already fetched for the thumbnail URL above) is the closest equivalent -
+    lands on a one-result gallery the user can click straight into."""
+    return f"{base}/library/photos?q=hash:{photo_hash}" if photo_hash else None
 
 
 def nearby_photos(
@@ -139,8 +145,10 @@ def nearby_photos(
             {
                 "uid": p.get("UID"),
                 "taken_at": p.get("TakenAt"),
+                "lat": p.get("Lat"),
+                "lon": p.get("Lng"),
                 "thumb_url": _thumb_url(base, preview_token, photo_hash),
-                "page_url": _photo_page_url(base, p.get("UID")),
+                "page_url": _photo_page_url(base, photo_hash),
             }
         )
     return results

@@ -248,7 +248,7 @@ function wpSlicePolyline(latlngs, startFrac, endFrac) {
 
 let _wpDayMapRenderToken = 0;
 
-async function wpRenderDayMap(map, points, timeline, contextVisits = {}) {
+async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos = []) {
   // Route fetches below are async and per-segment - if the day changes again
   // before they resolve, a stale route from the previous render must not get
   // drawn onto the new one.
@@ -294,6 +294,8 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}) {
     wpAddLayer(map, marker);
     bounds.push([v.lat, v.lon]);
   });
+
+  wpAddPhotoMarkers(map, photos, bounds);
 
   // Route lines between consecutive visits, for whichever segments aren't
   // already covered by the raw-point polyline above. Straight dashed lines
@@ -400,6 +402,52 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}) {
       map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
       wpAddLayer(map, wpCasedPolyline(routed, color, { opacity: 0.9 }));
     }
+  });
+}
+
+// Plots PhotoPrism photos directly on the map (like PhotoPrism's own Places
+// view), rather than only as a strip below it - photos taken at (near
+// enough) the same spot are grouped into one marker instead of stacking
+// identical pins on top of each other (confirmed live: several photos taken
+// at one house otherwise rendered as unclickable overlapping dots). 4
+// decimal places (~11m) is a coarse-but-reasonable "same spot" threshold -
+// good enough to collapse a house/venue's own photos together without
+// merging genuinely distinct nearby places.
+const WP_PHOTO_GROUP_PRECISION = 4;
+
+function wpGroupPhotosByLocation(photos) {
+  const groups = new Map();
+  (photos || []).forEach((p) => {
+    if (p.lat == null || p.lon == null) return; // no GPS on this photo - gallery-strip only, can't be plotted
+    const key = `${p.lat.toFixed(WP_PHOTO_GROUP_PRECISION)},${p.lon.toFixed(WP_PHOTO_GROUP_PRECISION)}`;
+    if (!groups.has(key)) groups.set(key, { lat: p.lat, lon: p.lon, photos: [] });
+    groups.get(key).photos.push(p);
+  });
+  return [...groups.values()];
+}
+
+function wpPhotoDivIcon(coverPhoto, count) {
+  const badge = count > 1 ? `<div class="wp-photo-marker-count">${count}</div>` : '';
+  return L.divIcon({
+    className: 'wp-photo-marker',
+    html: `<div class="wp-photo-marker-thumb" style="background-image: url('${coverPhoto.thumb_url}')"></div>${badge}`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -20],
+  });
+}
+
+// Shared by wpRenderDayMap (Day + Trip detail, both call it) - kept as its
+// own function since a Place detail view's map (if one exists later) would
+// want the same grouping/marker logic without the rest of wpRenderDayMap's
+// route/segment handling.
+function wpAddPhotoMarkers(map, photos, bounds) {
+  wpGroupPhotosByLocation(photos).forEach((g) => {
+    const cover = g.photos[0];
+    const marker = L.marker([g.lat, g.lon], { icon: wpPhotoDivIcon(cover, g.photos.length) });
+    marker.on('click', () => window.open(cover.page_url, '_blank', 'noopener'));
+    wpAddLayer(map, marker);
+    bounds.push([g.lat, g.lon]);
   });
 }
 

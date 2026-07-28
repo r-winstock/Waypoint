@@ -481,3 +481,21 @@ h1, h2, h3, .display {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   font-size: 10px; line-height: 1;
 }
+
+/* PhotoPrism photo markers - a circular thumbnail plotted at the photo's own
+   GPS position (grouped by near-identical coordinate, see
+   wpGroupPhotosByLocation), echoing PhotoPrism's own Places map view. */
+.wp-photo-marker { background: none; border: none; cursor: pointer; }
+.wp-photo-marker-thumb {
+  width: 36px; height: 36px; border-radius: 50%;
+  background-size: cover; background-position: center;
+  border: 2px solid var(--wp-surface-1); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+.wp-photo-marker-count {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 16px; height: 16px; padding: 0 3px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--wp-accent); color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}

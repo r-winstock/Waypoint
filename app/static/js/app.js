@@ -490,7 +490,7 @@ function waypoint() {
     },
     renderDayMap() {
       if (!this.day.map) this.day.map = wpInitMap('map-container');
-      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits);
+      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits, this.day.data.photos);
     },
     dayStatModes() {
       if (!this.day.data) return [];
@@ -546,7 +546,7 @@ function waypoint() {
     },
     renderTripDetailMap() {
       if (!this.trips.detailMap) this.trips.detailMap = wpInitMap('trip-detail-map-container');
-      wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline);
+      wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline, {}, this.trips.detail.photos);
     },
 
     // ─── Insights ───
