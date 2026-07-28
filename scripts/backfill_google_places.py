@@ -149,6 +149,19 @@ def run(apply: bool) -> None:
             primary_type = data.get("primaryType")
             mapped_category = GOOGLE_TYPE_TO_CATEGORY.get(primary_type)
 
+            # A handful of placeIds resolve to a broad locality/transit-hub
+            # entry rather than the actual specific spot - confirmed live
+            # ("Ashburnham Road" would have been overwritten with plain
+            # "Bedford", the city it's already filed under, with category
+            # flipped to Transport off a primaryType of transit_station
+            # that belongs to that same too-broad entry). A name that's
+            # just the place's own already-known city is never an
+            # improvement (we already have that in Place.city) - skip the
+            # whole result rather than trust a type derived from the same
+            # unreliable resolution.
+            if new_name and place.city and new_name.strip().lower() == place.city.strip().lower():
+                continue
+
             changed = False
             if new_name and new_name != place.name:
                 print(f"place {place.id}: name {place.name!r} -> {new_name!r}")
