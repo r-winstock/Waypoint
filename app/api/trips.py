@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.country_names import country_name_en
 from app.db import db_dependency
 from app.models import Trip, TripSegment
-from app.photoprism import nearby_photos
+from app.photoprism import attach_photos_to_visits, nearby_photos
 
 router = APIRouter()
 
@@ -137,6 +137,13 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
     ]
     timeline.sort(key=lambda e: e["start_ts"])
 
+    # limit=100, not nearby_photos' own smaller default - a multi-day trip
+    # can have far more distinct stops than a single Day view, each wanting
+    # its own handful of photos once attach_photos_to_visits splits them up
+    # below, so the same cap that's fine for one day is too tight here.
+    trip_photos = nearby_photos(start_ts=trip.start_ts, end_ts=trip.end_ts, limit=100)
+    unassigned_photos = attach_photos_to_visits(timeline, trip_photos)
+
     return {
         "id": trip.id,
         "start_ts": trip.start_ts,
@@ -146,5 +153,5 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
         "primary_country": country_name_en(trip.primary_country_code, trip.primary_country),
         "primary_country_code": trip.primary_country_code,
         "timeline": timeline,
-        "photos": nearby_photos(start_ts=trip.start_ts, end_ts=trip.end_ts, limit=24),
+        "photos": unassigned_photos,
     }

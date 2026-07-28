@@ -206,12 +206,15 @@
             </div>
 
             <template x-if="day.data.photos && day.data.photos.length">
-              <div class="photo-gallery">
-                <template x-for="photo in day.data.photos" :key="photo.uid || photo.thumb_url">
-                  <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
-                    <img :src="photo.thumb_url" loading="lazy">
-                  </a>
-                </template>
+              <div>
+                <div class="text-xs mb-1" style="color: var(--wp-fg-dim)">Other photos from today</div>
+                <div class="photo-gallery">
+                  <template x-for="photo in day.data.photos" :key="photo.uid || photo.thumb_url">
+                    <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
+                      <img :src="photo.thumb_url" loading="lazy">
+                    </a>
+                  </template>
+                </div>
               </div>
             </template>
 
@@ -249,6 +252,15 @@
                         </div>
                         <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTimeRange(entry.start_ts, entry.end_ts)].filter(Boolean).join(' · ')"></div>
                         <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
+                        <template x-if="entry.photos && entry.photos.length">
+                          <div class="photo-gallery photo-gallery--sm">
+                            <template x-for="photo in entry.photos" :key="photo.uid || photo.thumb_url">
+                              <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
+                                <img :src="photo.thumb_url" loading="lazy">
+                              </a>
+                            </template>
+                          </div>
+                        </template>
                       </div>
                     </template>
                     <template x-if="entry.type==='segment'">
@@ -384,12 +396,15 @@
           <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="formatDateRange(trips.detail.start_ts, trips.detail.end_ts) + ' · ' + trips.detail.days + ' day' + (trips.detail.days > 1 ? 's' : '')"></div>
 
           <template x-if="trips.detail.photos && trips.detail.photos.length">
-            <div class="photo-gallery">
-              <template x-for="photo in trips.detail.photos" :key="photo.uid || photo.thumb_url">
-                <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
-                  <img :src="photo.thumb_url" loading="lazy">
-                </a>
-              </template>
+            <div>
+              <div class="text-xs mb-1" style="color: var(--wp-fg-dim)">Other photos from this trip</div>
+              <div class="photo-gallery">
+                <template x-for="photo in trips.detail.photos" :key="photo.uid || photo.thumb_url">
+                  <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
+                    <img :src="photo.thumb_url" loading="lazy">
+                  </a>
+                </template>
+              </div>
             </div>
           </template>
 
@@ -421,6 +436,15 @@
                           </div>
                           <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTimeRange(entry.start_ts, entry.end_ts)].filter(Boolean).join(' · ')"></div>
                           <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
+                          <template x-if="entry.photos && entry.photos.length">
+                            <div class="photo-gallery photo-gallery--sm">
+                              <template x-for="photo in entry.photos" :key="photo.uid || photo.thumb_url">
+                                <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
+                                  <img :src="photo.thumb_url" loading="lazy">
+                                </a>
+                              </template>
+                            </div>
+                          </template>
                         </div>
                       </template>
                       <template x-if="entry.type==='segment'">

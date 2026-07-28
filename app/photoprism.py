@@ -178,3 +178,53 @@ def nearby_photos(
             }
         )
     return results
+
+
+def _parse_taken_at(taken_at: str | None) -> int | None:
+    """PhotoPrism's TakenAt is an ISO 8601 UTC string ("2026-05-10T17:45:19Z")
+    - Python's own datetime.fromisoformat doesn't accept a bare "Z" suffix
+    on versions before 3.11, hence the explicit swap to "+00:00" rather than
+    relying on that directly."""
+    if not taken_at:
+        return None
+    try:
+        return int(datetime.fromisoformat(taken_at.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return None
+
+
+def attach_photos_to_visits(timeline: list[dict], photos: list[dict]) -> list[dict]:
+    """Buckets each photo into whichever visit entry's [start_ts, end_ts]
+    window contains its own taken_at, instead of leaving every one of a
+    day/trip's photos in one flat pile - "here's what you saw at each stop"
+    is a far more useful gallery than a single dump at the top, confirmed
+    directly from Richard's own feedback after seeing a photo-heavy day
+    render as one big horizontally-scrolling strip.
+
+    Deliberately segment entries are never matched against - a photo taken
+    mid-drive has no per-segment gallery slot in the UI to attach to, so
+    bucketing one there would silently remove it from view rather than
+    just displaying it differently. Any photo that doesn't land inside a
+    visit's own window (a segment-window photo, or one whose taken_at just
+    doesn't line up with anything in the timeline) is returned separately
+    rather than silently dropped - the caller still surfaces these as a
+    smaller "other photos" fallback strip.
+
+    Mutates the matching timeline entries in place (adding/extending their
+    own "photos" list) - day.py and trips.py each already build fresh dicts
+    for their own timeline entries per request, so there's no shared/cached
+    object here to worry about corrupting."""
+    unassigned = []
+    for photo in photos:
+        ts = _parse_taken_at(photo.get("taken_at"))
+        matched_entry = None
+        if ts is not None:
+            for entry in timeline:
+                if entry.get("type") == "visit" and entry["start_ts"] <= ts <= entry["end_ts"]:
+                    matched_entry = entry
+                    break
+        if matched_entry is not None:
+            matched_entry.setdefault("photos", []).append(photo)
+        else:
+            unassigned.append(photo)
+    return unassigned

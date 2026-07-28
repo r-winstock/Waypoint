@@ -490,7 +490,18 @@ function waypoint() {
     },
     renderDayMap() {
       if (!this.day.map) this.day.map = wpInitMap('map-container');
-      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits, this.day.data.photos);
+      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits, this.allTimelinePhotos(this.day.data));
+    },
+    // `data.photos` is only the leftover photos that didn't match any
+    // visit's own time window (see attach_photos_to_visits) - most photos
+    // live on their matching timeline entry instead, for the per-visit
+    // gallery strips. The map still wants every photo plotted regardless
+    // of which gallery (if any) it ended up in, so this recombines both
+    // rather than the map silently losing markers for anything attached
+    // to a visit.
+    allTimelinePhotos(data) {
+      const fromEntries = (data.timeline || []).filter((e) => e.photos && e.photos.length).flatMap((e) => e.photos);
+      return (data.photos || []).concat(fromEntries);
     },
     dayStatModes() {
       if (!this.day.data) return [];
@@ -546,7 +557,7 @@ function waypoint() {
     },
     renderTripDetailMap() {
       if (!this.trips.detailMap) this.trips.detailMap = wpInitMap('trip-detail-map-container');
-      wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline, {}, this.trips.detail.photos);
+      wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline, {}, this.allTimelinePhotos(this.trips.detail));
     },
 
     // ─── Insights ───

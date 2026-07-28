@@ -398,7 +398,11 @@ h1, h2, h3, .display {
 }
 .photo-gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .photo-gallery--sm { margin: 8px 0 0; }
-.photo-gallery--sm a { width: 48px; height: 48px; border-color: rgba(255, 255, 255, 0.3); }
+.photo-gallery--sm a { width: 48px; height: 48px; }
+/* The Places drilldown's small gallery sits on a dark photo-card scrim, not
+   a plain card background - a var(--wp-border) outline there is nearly
+   invisible, so that specific context keeps the lighter fixed override. */
+.card-photo-content .photo-gallery--sm a { border-color: rgba(255, 255, 255, 0.3); }
 
 /* ─── Day timeline ─── */
 .day-row {

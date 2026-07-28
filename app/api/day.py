@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import db_dependency
 from app.models import LocationPoint, TripSegment, Visit
-from app.photoprism import nearby_photos
+from app.photoprism import attach_photos_to_visits, nearby_photos
 from app.processing import VISIT_MERGE_MAX_GAP_S
 
 router = APIRouter()
@@ -169,6 +169,18 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
         stats[f"{s.mode}_m"] = stats.get(f"{s.mode}_m", 0.0) + s.distance_m
         stats[f"{s.mode}_s"] = stats.get(f"{s.mode}_s", 0.0) + s.duration_s
 
+    # end_ts - 1, not end_ts: see nearby_photos' own docstring for why -
+    # _day_bounds returns the exclusive start of the *next* day, already one
+    # day ahead of the day actually being viewed, and nearby_photos pads
+    # whatever end_ts it's given by another full day itself.
+    day_photos = nearby_photos(start_ts=start_ts, end_ts=end_ts - 1, limit=60)
+    # Attaches each photo to whichever visit it was taken during, so a
+    # photo-heavy day shows "what you saw at each stop" rather than one
+    # long horizontally-scrolling strip at the top - the leftover return
+    # value (photos matching no visit's own time window) is still shown,
+    # just as a separate, clearly-labelled "other photos" fallback.
+    unassigned_photos = attach_photos_to_visits(timeline, day_photos)
+
     return {
         "date": day_str,
         "stats": {**stats, "visits": len(coalesced_visits)},
@@ -178,12 +190,5 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
             "before": {"lat": before_visit.lat, "lon": before_visit.lon} if before_visit else None,
             "after": {"lat": after_visit.lat, "lon": after_visit.lon} if after_visit else None,
         },
-        # end_ts - 1, not end_ts: _day_bounds returns the exclusive start of
-        # the *next* day (midnight), not the last moment of this one -
-        # nearby_photos already pads end_ts by a day itself to work around
-        # PhotoPrism's own before-filter bug (see its docstring), so passing
-        # the already-exclusive boundary straight through double-padded it
-        # to two days ahead - confirmed live this leaked the next day's
-        # photos onto today's map/gallery (and today's onto yesterday's).
-        "photos": nearby_photos(start_ts=start_ts, end_ts=end_ts - 1),
+        "photos": unassigned_photos,
     }
