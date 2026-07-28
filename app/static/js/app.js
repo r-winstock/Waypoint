@@ -792,8 +792,8 @@ function waypoint() {
       if (!placeId) return;
       this.placeEdit = {
         open: true, placeId, name: name || '', category: category || 'Other places',
-        city: city || '', country: country || '', countryCode: countryCode || '',
-        alternatives: [], loadingAlternatives: true, saving: false,
+        city: city || '', country: country || '', countryCode: countryCode || '', googlePlaceId: '',
+        alternatives: [], googleAlternatives: [], loadingAlternatives: true, saving: false,
         searchQuery: '', searchResults: [], searching: false,
         similar: [], loadingSimilar: true, mergeIds: [],
       };
@@ -801,6 +801,7 @@ function waypoint() {
         const res = await fetch(`/api/places/detail/${placeId}/nearby`);
         const data = await res.json();
         this.placeEdit.alternatives = data.alternatives || [];
+        this.placeEdit.googleAlternatives = data.google_alternatives || [];
       } catch (e) { console.error('Failed to load nearby alternatives', e); }
       finally { this.placeEdit.loadingAlternatives = false; }
 
@@ -817,6 +818,15 @@ function waypoint() {
       // city/country as whatever was already resolved there.
       this.placeEdit.name = alt.name;
       this.placeEdit.category = alt.category;
+    },
+    selectGoogleAlternative(alt) {
+      // Same reasoning as selectAlternative (city/country left as-is), plus
+      // the placeId itself - worth keeping on the row even for a manual
+      // correction, so a future Google-sourced backfill re-run recognises
+      // this place as already resolved rather than having nothing to check.
+      this.placeEdit.name = alt.name;
+      this.placeEdit.category = alt.category;
+      this.placeEdit.googlePlaceId = alt.google_place_id;
     },
     async searchPlaces() {
       if (!this.placeEdit.searchQuery.trim()) return;
@@ -858,6 +868,7 @@ function waypoint() {
             city: this.placeEdit.city || null,
             country: this.placeEdit.country || null,
             country_code: this.placeEdit.countryCode || null,
+            google_place_id: this.placeEdit.googlePlaceId || null,
             merge_place_ids: this.placeEdit.mergeIds,
           }),
         });

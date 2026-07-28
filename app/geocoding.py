@@ -8,6 +8,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.db import get_setting
+from app.google_places import resolve_new_place
 from app.models import Place, Visit
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
@@ -420,6 +421,32 @@ def resolve_place(
             duplicate.google_place_id = google_place_id
         _tag_home(session, duplicate, lat, lon)
         return duplicate
+
+    # A live OwnTracks ping never carries its own Google Timeline placeId
+    # (only the historical import provides one directly) - best-effort
+    # enrich with a live Google Places lookup here anyway, since it's
+    # generally far more reliable for real businesses than a Nominatim
+    # reverse-geocode landing on the nearest road (confirmed at scale:
+    # scripts/backfill_google_places.py's ~87% hit rate re-resolving
+    # already-imported history this same way). Never a hard dependency -
+    # resolve_new_place degrades to None with no key configured, nothing
+    # found, or a failed request, leaving Nominatim's result untouched.
+    # name is preferred outright when Google has one (same as the backfill
+    # script), except when it's just the place's own city name again (a
+    # known failure mode where a placeId resolves to a too-broad locality/
+    # transit-hub entry rather than the specific spot - see that script's
+    # own guard for the same issue found live). category only replaces the
+    # generic "Other places" default - an OSM tag that already resolved a
+    # real category isn't worth second-guessing.
+    if google_place_id is None:
+        google_result = resolve_new_place(lat, lon)
+        if google_result:
+            g_name = google_result.get("name")
+            if g_name and not (city and g_name.strip().lower() == city.strip().lower()):
+                name = g_name
+            if google_result.get("category") and category == "Other places":
+                category = google_result["category"]
+            google_place_id = google_result.get("google_place_id")
 
     place = Place(
         lat_round=lat_r,

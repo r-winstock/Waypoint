@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import db_dependency
 from app.geocoding import categorise_from_raw_json, find_nearby_places, find_similar_places, merge_places_into, search_places
+from app.google_places import find_nearby_google_places
 from app.models import Place, Visit
 
 router = APIRouter()
@@ -57,10 +58,21 @@ def reclassify_places(session: Session = Depends(db_dependency)):
 
 @router.get("/api/places/detail/{place_id}/nearby")
 def get_nearby_alternatives(place_id: int, session: Session = Depends(db_dependency)):
+    """Two independently-sourced candidate lists, not merged into one -
+    Overpass/OSM and Google Places have genuinely different coverage for
+    the same spot (confirmed live: scripts/backfill_google_places.py found
+    Google's own data correct for real businesses far more often than the
+    OSM tag at the same coordinate), so showing both lets a correction
+    pick whichever source actually got it right rather than trusting one
+    silently. google_alternatives is simply empty if GOOGLE_PLACES_API_KEY
+    isn't configured - never a hard requirement for this feature."""
     place = session.get(Place, place_id)
     if place is None:
         raise HTTPException(status_code=404, detail="Place not found")
-    return {"alternatives": find_nearby_places(place.lat_round, place.lon_round)}
+    return {
+        "alternatives": find_nearby_places(place.lat_round, place.lon_round),
+        "google_alternatives": find_nearby_google_places(place.lat_round, place.lon_round),
+    }
 
 
 @router.get("/api/places/detail/{place_id}/visits")
@@ -117,6 +129,7 @@ class PlaceCorrection(BaseModel):
     city: str | None = None
     country: str | None = None
     country_code: str | None = None
+    google_place_id: str | None = None
     merge_place_ids: list[int] = []
 
 
@@ -130,6 +143,11 @@ def correct_place(place_id: int, correction: PlaceCorrection, session: Session =
     place.city = correction.city
     place.country = correction.country
     place.country_code = correction.country_code.upper() if correction.country_code else None
+    # Only ever set, never cleared - a correction picked from the OSM list
+    # (or typed by hand) simply has none to offer, and shouldn't erase a
+    # placeId this row already had from an earlier Google-sourced result.
+    if correction.google_place_id:
+        place.google_place_id = correction.google_place_id
     place.manually_corrected = True
     merged_visits = merge_places_into(session, place_id, correction.merge_place_ids)
     session.commit()

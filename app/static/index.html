@@ -805,7 +805,7 @@
         </template>
       </select>
 
-      <label class="field-label">Nearby alternatives</label>
+      <label class="field-label">Nearby alternatives (OpenStreetMap)</label>
       <div x-show="placeEdit.loadingAlternatives" class="text-sm mb-3" style="color: var(--wp-fg-muted)">Looking nearby…</div>
       <div x-show="!placeEdit.loadingAlternatives && !placeEdit.alternatives.length" class="text-sm mb-3" style="color: var(--wp-fg-muted)">Nothing named found nearby.</div>
       <div class="mb-3">
@@ -819,6 +819,30 @@
           </button>
         </template>
       </div>
+
+      <!-- A separate list, not merged with the OSM one above - Overpass
+           and Google Places have genuinely different coverage for the same
+           spot, confirmed live via scripts/backfill_google_places.py, so
+           showing both lets a correction pick whichever source actually
+           got it right rather than trusting one silently. Empty (with no
+           "nothing found" message of its own) when GOOGLE_PLACES_API_KEY
+           isn't configured - never presented as a missing/broken feature. -->
+      <template x-if="!placeEdit.loadingAlternatives && placeEdit.googleAlternatives.length">
+        <div>
+          <label class="field-label">Nearby alternatives (Google)</label>
+          <div class="mb-3">
+            <template x-for="alt in placeEdit.googleAlternatives" :key="alt.google_place_id">
+              <button type="button" class="alt-option" @click="selectGoogleAlternative(alt)">
+                <div class="flex items-center justify-between">
+                  <span x-text="alt.name"></span>
+                  <span class="text-xs" style="color: var(--wp-fg-dim)" x-text="alt.distance_m + 'm'"></span>
+                </div>
+                <div class="text-xs" style="color: var(--wp-fg-dim)" x-text="alt.category"></div>
+              </button>
+            </template>
+          </div>
+        </div>
+      </template>
 
       <label class="field-label">Can't find it nearby? Search by name</label>
       <div class="flex gap-2 mb-2">
