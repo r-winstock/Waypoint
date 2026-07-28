@@ -11,6 +11,7 @@ from app.db import db_dependency
 from app.geocoding import categorise_from_raw_json, find_nearby_places, find_similar_places, merge_places_into, search_places
 from app.google_places import find_nearby_google_places
 from app.models import Place, Visit
+from app.photoprism import nearby_photos
 
 router = APIRouter()
 
@@ -87,6 +88,10 @@ def get_place_visits(place_id: int, session: Session = Depends(db_dependency)):
         "city": place.city,
         "category": place.category,
         "visits": [{"id": v.id, "start_ts": v.start_ts, "end_ts": v.end_ts} for v in visits],
+        # No date restriction - unlike Day/Trip (a single time window), a
+        # place is revisited over years, so every photo ever taken there is
+        # relevant, not just from one visit.
+        "photos": nearby_photos(lat=place.lat_round, lon=place.lon_round, limit=24),
     }
 
 

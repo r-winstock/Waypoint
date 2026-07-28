@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.country_names import country_name_en
 from app.db import db_dependency
 from app.models import Trip, TripSegment
+from app.photoprism import nearby_photos
 
 router = APIRouter()
 
@@ -145,4 +146,5 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
         "primary_country": country_name_en(trip.primary_country_code, trip.primary_country),
         "primary_country_code": trip.primary_country_code,
         "timeline": timeline,
+        "photos": nearby_photos(start_ts=trip.start_ts, end_ts=trip.end_ts, limit=24),
     }

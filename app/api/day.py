@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import db_dependency
 from app.models import LocationPoint, TripSegment, Visit
+from app.photoprism import nearby_photos
 from app.processing import VISIT_MERGE_MAX_GAP_S
 
 router = APIRouter()
@@ -177,4 +178,5 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
             "before": {"lat": before_visit.lat, "lon": before_visit.lon} if before_visit else None,
             "after": {"lat": after_visit.lat, "lon": after_visit.lon} if after_visit else None,
         },
+        "photos": nearby_photos(start_ts=start_ts, end_ts=end_ts),
     }

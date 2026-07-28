@@ -125,3 +125,12 @@ curl -X PUT http://waypoint.home.lan/api/settings -H "Content-Type: application/
 - Reverse geocoding calls the public Nominatim API, self-throttled to its
   1 req/sec usage policy, with results cached indefinitely in the `places`
   table - repeat visits to the same spot never re-query it.
+- **Optional:** `GOOGLE_PLACES_API_KEY` enriches new places with Google's own
+  name/category data and powers a second "nearby alternatives" list in the
+  "Fix this place" modal. Degrades to Nominatim-only if unset.
+- **Optional:** `PHOTOPRISM_URL` (e.g. `http://photoprism.home.lan`) and
+  `PHOTOPRISM_TOKEN` (an app password, Settings -> Apps and Devices in
+  PhotoPrism) add a real-photo gallery to Day/Trip/Place detail views,
+  sourced from your own PhotoPrism library rather than Wikipedia's stock
+  photos. Degrades to no gallery (Wikipedia card photos are unaffected) if
+  unset.

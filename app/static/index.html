@@ -205,6 +205,16 @@
               </div>
             </div>
 
+            <template x-if="day.data.photos && day.data.photos.length">
+              <div class="photo-gallery">
+                <template x-for="photo in day.data.photos" :key="photo.uid">
+                  <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
+                    <img :src="photo.thumb_url" loading="lazy">
+                  </a>
+                </template>
+              </div>
+            </template>
+
             <template x-if="!day.data.timeline.length">
               <div class="empty-state">No location data for this day yet.</div>
             </template>
@@ -372,6 +382,16 @@
           <button class="nav-tab mb-3" @click="history.back()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to trips</button>
           <div class="text-lg font-semibold display mb-1" x-text="trips.detail.primary_city || trips.detail.primary_country || 'Trip'"></div>
           <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="formatDateRange(trips.detail.start_ts, trips.detail.end_ts) + ' · ' + trips.detail.days + ' day' + (trips.detail.days > 1 ? 's' : '')"></div>
+
+          <template x-if="trips.detail.photos && trips.detail.photos.length">
+            <div class="photo-gallery">
+              <template x-for="photo in trips.detail.photos" :key="photo.uid">
+                <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
+                  <img :src="photo.thumb_url" loading="lazy">
+                </a>
+              </template>
+            </div>
+          </template>
 
           <div class="day-columns">
             <div class="day-map-col">
@@ -618,6 +638,13 @@
                       <template x-for="v in (placeVisits[p.id].visits || [])" :key="v.id">
                         <div class="text-xs py-0.5" :style="imgFailed ? '' : 'color: rgba(255,255,255,0.85)'" x-text="formatDateRange(v.start_ts, v.end_ts) + ' · ' + formatTimeRange(v.start_ts, v.end_ts)"></div>
                       </template>
+                      <div class="photo-gallery photo-gallery--sm" x-show="(placeVisits[p.id].photos || []).length" @click.stop>
+                        <template x-for="photo in (placeVisits[p.id].photos || [])" :key="photo.uid">
+                          <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
+                            <img :src="photo.thumb_url" loading="lazy">
+                          </a>
+                        </template>
+                      </div>
                     </div>
                   </template>
                 </div>

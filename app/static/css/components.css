@@ -390,6 +390,16 @@ h1, h2, h3, .display {
 }
 .card-photo-actions .missing-label:hover { color: var(--wp-fg-primary); border-color: var(--wp-accent); }
 
+/* ─── PhotoPrism photo gallery (Day/Trip/Place detail) ─── */
+.photo-gallery { display: flex; gap: 8px; overflow-x: auto; margin: 12px 0; padding-bottom: 4px; }
+.photo-gallery a {
+  flex-shrink: 0; display: block; width: 96px; height: 96px;
+  border-radius: 8px; overflow: hidden; border: 1px solid var(--wp-border);
+}
+.photo-gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-gallery--sm { margin: 8px 0 0; }
+.photo-gallery--sm a { width: 48px; height: 48px; border-color: rgba(255, 255, 255, 0.3); }
+
 /* ─── Day timeline ─── */
 .day-row {
   display: flex; align-items: flex-start; gap: 12px;

@@ -694,11 +694,11 @@ function waypoint() {
         delete this.placeVisits[placeId];
         return;
       }
-      this.placeVisits[placeId] = { loading: true, visits: [] };
+      this.placeVisits[placeId] = { loading: true, visits: [], photos: [] };
       try {
         const res = await fetch(`/api/places/detail/${placeId}/visits`);
         const data = await res.json();
-        this.placeVisits[placeId] = { loading: false, visits: data.visits };
+        this.placeVisits[placeId] = { loading: false, visits: data.visits, photos: data.photos || [] };
       } catch (e) { console.error('Failed to load place visits', e); delete this.placeVisits[placeId]; }
     },
 
