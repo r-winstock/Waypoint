@@ -174,6 +174,10 @@ def nearby_photos(
                 "lat": p_lat,
                 "lon": p_lon,
                 "thumb_url": _thumb_url(base, preview_token, photo_hash),
+                # A larger size for Waypoint's own in-app photo viewer -
+                # thumb_url (tile_500) is right for the small gallery/map
+                # markers but too soft once shown at near-full width.
+                "view_url": _thumb_url(base, preview_token, photo_hash, size="fit_1920"),
                 "page_url": _photo_page_url(base, photo_hash),
             }
         )

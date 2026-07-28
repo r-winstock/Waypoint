@@ -248,7 +248,7 @@ function wpSlicePolyline(latlngs, startFrac, endFrac) {
 
 let _wpDayMapRenderToken = 0;
 
-async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos = []) {
+async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos = [], onPhotoClick = () => {}) {
   // Route fetches below are async and per-segment - if the day changes again
   // before they resolve, a stale route from the previous render must not get
   // drawn onto the new one.
@@ -295,7 +295,7 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
     bounds.push([v.lat, v.lon]);
   });
 
-  wpAddPhotoMarkers(map, photos, bounds);
+  wpAddPhotoMarkers(map, photos, bounds, onPhotoClick);
 
   // Route lines between consecutive visits, for whichever segments aren't
   // already covered by the raw-point polyline above. Straight dashed lines
@@ -441,11 +441,16 @@ function wpPhotoDivIcon(coverPhoto, count) {
 // own function since a Place detail view's map (if one exists later) would
 // want the same grouping/marker logic without the rest of wpRenderDayMap's
 // route/segment handling.
-function wpAddPhotoMarkers(map, photos, bounds) {
+//
+// onPhotoClick opens Waypoint's own in-app photo viewer (app.js's
+// openPhotoViewer) rather than this module reaching for window.open
+// itself - map.js has no Alpine/PhotoPrism-URL knowledge of its own, so the
+// click behaviour is threaded in as a callback rather than hardcoded here.
+function wpAddPhotoMarkers(map, photos, bounds, onPhotoClick) {
   wpGroupPhotosByLocation(photos).forEach((g) => {
     const cover = g.photos[0];
     const marker = L.marker([g.lat, g.lon], { icon: wpPhotoDivIcon(cover, g.photos.length) });
-    marker.on('click', () => window.open(cover.page_url, '_blank', 'noopener'));
+    marker.on('click', () => onPhotoClick(cover));
     wpAddLayer(map, marker);
     bounds.push([g.lat, g.lon]);
   });

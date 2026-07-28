@@ -63,6 +63,16 @@ function formatRelative(ts) {
   return new Date(ts * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// photo.taken_at is PhotoPrism's own ISO 8601 UTC string, not a unix
+// timestamp like every other date field in this app - kept as its own
+// formatter rather than routing it through the timestamp-based ones above.
+function formatPhotoDate(takenAt) {
+  if (!takenAt) return '';
+  const d = new Date(takenAt);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function todayIso() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -166,6 +176,10 @@ function waypoint() {
       name: '', category: 'Other places', city: '', country: '', countryCode: '',
       searchQuery: '', searchResults: [], searching: false, saving: false,
     },
+
+    photoViewer: { open: false, photo: null },
+    openPhotoViewer(photo) { this.photoViewer = { open: true, photo }; },
+    closePhotoViewer() { this.photoViewer.open = false; },
 
     // ─── formatters exposed to templates ───
     formatMiles,
@@ -490,7 +504,7 @@ function waypoint() {
     },
     renderDayMap() {
       if (!this.day.map) this.day.map = wpInitMap('map-container');
-      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits, this.allTimelinePhotos(this.day.data));
+      wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits, this.allTimelinePhotos(this.day.data), (photo) => this.openPhotoViewer(photo));
     },
     // `data.photos` is only the leftover photos that didn't match any
     // visit's own time window (see attach_photos_to_visits) - most photos
@@ -557,7 +571,7 @@ function waypoint() {
     },
     renderTripDetailMap() {
       if (!this.trips.detailMap) this.trips.detailMap = wpInitMap('trip-detail-map-container');
-      wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline, {}, this.allTimelinePhotos(this.trips.detail));
+      wpRenderDayMap(this.trips.detailMap, [], this.trips.detail.timeline, {}, this.allTimelinePhotos(this.trips.detail), (photo) => this.openPhotoViewer(photo));
     },
 
     // ─── Insights ───
