@@ -207,7 +207,7 @@
 
             <template x-if="day.data.photos && day.data.photos.length">
               <div class="photo-gallery">
-                <template x-for="photo in day.data.photos" :key="photo.uid">
+                <template x-for="photo in day.data.photos" :key="photo.uid || photo.thumb_url">
                   <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
                     <img :src="photo.thumb_url" loading="lazy">
                   </a>
@@ -363,7 +363,7 @@
                 </template>
               </div>
 
-              <div class="flex items-center justify-center gap-3 mt-5" x-show="trips.data.total_pages > 1">
+              <div class="flex items-center justify-center gap-3 mt-5" x-show="trips.data && trips.data.total_pages > 1">
                 <button class="btn-icon" :disabled="trips.page <= 1" @click="changeTripsPage(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
                 <span class="text-sm" style="color: var(--wp-fg-muted)" x-text="'Page ' + trips.page + ' of ' + trips.data.total_pages"></span>
                 <button class="btn-icon" :disabled="trips.page >= trips.data.total_pages" @click="changeTripsPage(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
@@ -385,7 +385,7 @@
 
           <template x-if="trips.detail.photos && trips.detail.photos.length">
             <div class="photo-gallery">
-              <template x-for="photo in trips.detail.photos" :key="photo.uid">
+              <template x-for="photo in trips.detail.photos" :key="photo.uid || photo.thumb_url">
                 <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
                   <img :src="photo.thumb_url" loading="lazy">
                 </a>
@@ -639,7 +639,7 @@
                         <div class="text-xs py-0.5" :style="imgFailed ? '' : 'color: rgba(255,255,255,0.85)'" x-text="formatDateRange(v.start_ts, v.end_ts) + ' · ' + formatTimeRange(v.start_ts, v.end_ts)"></div>
                       </template>
                       <div class="photo-gallery photo-gallery--sm" x-show="(placeVisits[p.id].photos || []).length" @click.stop>
-                        <template x-for="photo in (placeVisits[p.id].photos || [])" :key="photo.uid">
+                        <template x-for="photo in (placeVisits[p.id].photos || [])" :key="photo.uid || photo.thumb_url">
                           <a :href="photo.page_url" target="_blank" rel="noopener" title="Open in PhotoPrism">
                             <img :src="photo.thumb_url" loading="lazy">
                           </a>
@@ -747,7 +747,7 @@
             <div class="empty-state">No countries visited yet.</div>
           </template>
           <div class="grid-cards">
-            <template x-for="c in (world.data ? world.data.countries : [])" :key="c.name">
+            <template x-for="c in (world.data ? world.data.countries : [])" :key="c.country_code || c.name">
               <div class="grid-card grid-card--flag" x-data="{imgFailed: false}" @click="openCountry(c.country_code)">
                 <img x-show="!imgFailed && c.country_code" class="card-flag-img" :src="flagImageUrl(c.country_code)" @error="imgFailed = true">
                 <span class="count-badge" x-text="c.city_count + ' cit' + (c.city_count === 1 ? 'y' : 'ies')"></span>

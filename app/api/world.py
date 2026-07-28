@@ -13,16 +13,26 @@ router = APIRouter()
 
 @router.get("/api/world")
 def get_world(session: Session = Depends(db_dependency)):
+    # Grouped by country_code (falling back to the raw country text only
+    # when no code is set), not by Place.country directly - two Places can
+    # share the same real country but carry slightly different raw country
+    # text (different geocoding passes, a manual correction, an import
+    # source) and previously formed two separate groups here that both
+    # happened to resolve to the same English display name via
+    # country_name_en (confirmed live: two "Ireland" rows) - identical
+    # .name values on the frontend's own x-for :key, which broke Alpine's
+    # rendering for the entire World list, not just the duplicate entry.
+    group_key = func.coalesce(Place.country_code, Place.country)
     rows = (
         session.query(
-            Place.country,
-            Place.country_code,
+            func.max(Place.country),
+            func.max(Place.country_code),
             func.count(func.distinct(Place.city)),
             func.max(Visit.end_ts),
         )
         .join(Visit, Visit.place_id == Place.id)
         .filter(Place.country.isnot(None))
-        .group_by(Place.country)
+        .group_by(group_key)
         .order_by(func.max(Visit.end_ts).desc())
         .all()
     )
