@@ -178,5 +178,12 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
             "before": {"lat": before_visit.lat, "lon": before_visit.lon} if before_visit else None,
             "after": {"lat": after_visit.lat, "lon": after_visit.lon} if after_visit else None,
         },
-        "photos": nearby_photos(start_ts=start_ts, end_ts=end_ts),
+        # end_ts - 1, not end_ts: _day_bounds returns the exclusive start of
+        # the *next* day (midnight), not the last moment of this one -
+        # nearby_photos already pads end_ts by a day itself to work around
+        # PhotoPrism's own before-filter bug (see its docstring), so passing
+        # the already-exclusive boundary straight through double-padded it
+        # to two days ahead - confirmed live this leaked the next day's
+        # photos onto today's map/gallery (and today's onto yesterday's).
+        "photos": nearby_photos(start_ts=start_ts, end_ts=end_ts - 1),
     }
