@@ -141,12 +141,22 @@ def nearby_photos(
         photo_hash = p.get("Hash")
         if not photo_hash:
             continue
+        # PhotoPrism marshals a photo with no GPS EXIF as Lat: 0, Lng: 0
+        # (Go's zero value for an unset float field), not as a null/omitted
+        # field - confirmed live this plotted a UK photo with no location
+        # data at (0, 0), the Gulf of Guinea off the coast of West Africa
+        # ("Null Island"). A real photo at exactly (0, 0) is practically
+        # impossible, so this is always treated as "no location" rather
+        # than a genuine coordinate.
+        p_lat, p_lon = p.get("Lat"), p.get("Lng")
+        if p_lat == 0 and p_lon == 0:
+            p_lat = p_lon = None
         results.append(
             {
                 "uid": p.get("UID"),
                 "taken_at": p.get("TakenAt"),
-                "lat": p.get("Lat"),
-                "lon": p.get("Lng"),
+                "lat": p_lat,
+                "lon": p_lon,
                 "thumb_url": _thumb_url(base, preview_token, photo_hash),
                 "page_url": _photo_page_url(base, photo_hash),
             }
