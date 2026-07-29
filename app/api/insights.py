@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.country_names import country_name_en
 from app.db import db_dependency, get_setting
 from app.models import Place, Trip, TripSegment, Visit
 
@@ -123,13 +124,13 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     )
 
     longest_trip_row = (
-        session.query(Trip.primary_city, Trip.primary_country, Trip.start_ts, Trip.end_ts)
+        session.query(Trip.id, Trip.primary_city, Trip.primary_country, Trip.start_ts, Trip.end_ts)
         .order_by((Trip.end_ts - Trip.start_ts).desc())
         .first()
     )
 
     most_visited_row = (
-        session.query(Place.name, Place.city, func.count(Visit.id).label("cnt"))
+        session.query(Place.id, Place.name, Place.city, Place.category, func.count(Visit.id).label("cnt"))
         .join(Visit, Visit.place_id == Place.id)
         .filter(Place.name.isnot(None))
         .group_by(Place.id)
@@ -152,6 +153,7 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         ),
         "longest_trip": (
             {
+                "trip_id": longest_trip_row.id,
                 "primary_city": longest_trip_row.primary_city,
                 "primary_country": longest_trip_row.primary_country,
                 "start_ts": longest_trip_row.start_ts,
@@ -162,7 +164,13 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
             else None
         ),
         "most_visited_place": (
-            {"name": most_visited_row.name, "city": most_visited_row.city, "visit_count": most_visited_row.cnt}
+            {
+                "place_id": most_visited_row.id,
+                "name": most_visited_row.name,
+                "city": most_visited_row.city,
+                "category": most_visited_row.category,
+                "visit_count": most_visited_row.cnt,
+            }
             if most_visited_row
             else None
         ),
@@ -240,6 +248,109 @@ def get_insights_breakdown(session: Session = Depends(db_dependency)):
         "travel": {mode: {"distance_m": t["distance_m"], "duration_s": t["duration_s"]} for mode, t in travel.items()},
         "visits": {category: {"duration_s": duration_s} for category, duration_s in visits.items()},
     }
+
+
+# Excluded from "top category away from home" - Home trivially dominates
+# every real dataset (it's wherever the user sleeps most nights), Streets
+# and roads is a geocoding artefact (a resolved point with no real venue),
+# and Other places is definitionally the bucket for "couldn't tell you
+# anything more specific" - none of these make an interesting "did you know"
+# sentence, unlike a genuine venue category (Food and drink, Culture, etc).
+STORY_CATEGORY_EXCLUDE = {"Home", "Streets and roads", "Other places"}
+# Commonly cited figure (193 UN member states + 2 permanent observers) - a
+# defensible, widely-used denominator for "% of the world's countries",
+# not a precise legal count (that number is itself disputed depending on
+# whether e.g. Taiwan/Kosovo/Vatican are counted).
+WORLD_COUNTRY_COUNT = 195
+MOON_DISTANCE_M = 384_400_000.0
+
+
+@router.get("/api/insights/stories")
+def get_insights_stories(session: Session = Depends(db_dependency)):
+    """"Did you know" narrative insights, computed fresh from real numbers -
+    the Overview subtab's rotating hero card. Deliberately returns
+    structured data per story (a type + whatever raw numbers that type
+    needs), not a pre-composed sentence - the frontend already owns every
+    number-formatting convention this app uses (formatMiles, formatDuration,
+    monthName), and duplicating that formatting logic in Python here would
+    be a second, driftable source of truth for the exact same numbers
+    already shown elsewhere on the same page.
+
+    Every story is only included if its own underlying data is real and
+    non-trivial (never a "0 mi" or "None" story) - the same "no insight
+    beats a wrong-looking one" principle already applied throughout this
+    app (see e.g. images.py's own docstring)."""
+    highlights = get_insights_highlights(session)
+    yearly = get_insights_yearly(session)
+    seasonality = get_insights_seasonality(session)
+    breakdown = get_insights_breakdown(session)
+
+    stories: list[dict] = []
+
+    if highlights["total_distance_m"] > 0:
+        stories.append({"type": "circumference", "total_distance_m": highlights["total_distance_m"]})
+
+    if highlights["most_visited_place"]:
+        stories.append({"type": "most_visited", **highlights["most_visited_place"]})
+
+    if highlights["longest_trip"]:
+        stories.append({"type": "longest_trip", **highlights["longest_trip"]})
+
+    if highlights["busiest_day"]:
+        stories.append({"type": "busiest_day", **highlights["busiest_day"]})
+
+    if yearly["years"]:
+        peak_year = max(yearly["years"], key=lambda y: y["distance_m"])
+        if peak_year["distance_m"] > 0:
+            stories.append({"type": "peak_year", "year": peak_year["year"], "distance_m": peak_year["distance_m"]})
+
+    peak_month = max(seasonality["months"], key=lambda m: m["distance_m"])
+    if peak_month["distance_m"] > 0:
+        stories.append({"type": "peak_month", "month": peak_month["month"]})
+
+    if highlights["longest_gap_days"] is not None and highlights["longest_gap_days"] > 0:
+        stories.append({"type": "longest_gap", "days": highlights["longest_gap_days"]})
+
+    if highlights["total_countries"] > 0:
+        stories.append({
+            "type": "country_count",
+            "count": highlights["total_countries"],
+            "percent_of_world": round(highlights["total_countries"] / WORLD_COUNTRY_COUNT * 100),
+        })
+
+    first_visit_per_country = (
+        session.query(Place.country_code, Place.country, func.min(Visit.start_ts).label("first_ts"))
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.country_code.isnot(None))
+        .group_by(Place.country_code)
+        .all()
+    )
+    if first_visit_per_country:
+        newest = max(first_visit_per_country, key=lambda r: r.first_ts)
+        stories.append({
+            "type": "newest_country",
+            "country": country_name_en(newest.country_code, newest.country),
+            "country_code": newest.country_code,
+            "year": datetime.fromtimestamp(newest.first_ts, tz=timezone.utc).year,
+        })
+
+    top_category = max(
+        ((c, v["duration_s"]) for c, v in breakdown["visits"].items() if c not in STORY_CATEGORY_EXCLUDE),
+        key=lambda x: x[1],
+        default=None,
+    )
+    if top_category and top_category[1] > 0:
+        stories.append({"type": "top_category", "category": top_category[0], "duration_s": top_category[1]})
+
+    flying = breakdown["travel"].get("flying")
+    if flying and flying["distance_m"] > MOON_DISTANCE_M:
+        stories.append({"type": "moon_trips", "flying_m": flying["distance_m"]})
+
+    trip_count = session.query(func.count(Trip.id)).scalar() or 0
+    if trip_count > 0 and highlights["avg_trip_days"]:
+        stories.append({"type": "trip_frequency", "trip_count": trip_count, "avg_trip_days": highlights["avg_trip_days"]})
+
+    return {"stories": stories}
 
 
 @router.get("/api/insights/heatmap/{year}")

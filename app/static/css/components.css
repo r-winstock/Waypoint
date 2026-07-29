@@ -259,6 +259,47 @@ h1, h2, h3, .display {
 .insights-delta.up { color: #16a34a; }
 .insights-delta.down { color: #dc2626; }
 
+/* ─── Insights "did you know" story card (Overview subtab hero) ───
+   Full-bleed photo hero, not a caption strip - a "did you know" fact reads
+   as something that happened TO the reader, not a doorway back into their
+   own history, unless it looks and behaves like the real place/trip it's
+   about. Photo/scrim reuse the exact same .card-photo-img/.card-photo-scrim
+   treatment as Trip/Place/City cards elsewhere in this app (see
+   .grid-card--photo), so a story about a real place looks like that same
+   place everywhere else it appears, not a different, generic component. */
+.story-card {
+  position: relative; overflow: hidden; min-height: 220px;
+  border-radius: var(--wp-radius-card); background: var(--wp-accent-bg); border: 1px solid var(--wp-accent-border);
+  display: flex; align-items: flex-end;
+}
+.story-card .card-photo-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.story-card .card-photo-scrim {
+  position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(to top, rgba(10, 10, 10, 0.82), rgba(10, 10, 10, 0.25) 60%, rgba(10, 10, 10, 0.1));
+}
+.story-card-content {
+  position: relative; z-index: 2; width: 100%; padding: 28px 32px;
+}
+.story-card-content.clickable { cursor: pointer; }
+.story-card-icon { font-size: 30px; line-height: 1; margin-bottom: 10px; }
+.story-card-text {
+  font-family: var(--wp-font-display); font-size: 26px; line-height: 1.35;
+  color: var(--wp-fg-primary); max-width: 720px;
+}
+.story-card.has-photo .story-card-text { color: #fff; }
+.story-card-cta {
+  margin-top: 12px; font-size: 13px; font-weight: 600; color: var(--wp-accent-light);
+}
+.story-card.has-photo .story-card-cta { color: rgba(255, 255, 255, 0.9); }
+
+.story-paging { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; }
+.story-dots { display: flex; gap: 6px; }
+.story-dot {
+  width: 8px; height: 8px; border-radius: 50%; padding: 0; border: none;
+  background: var(--wp-surface-3); cursor: pointer;
+}
+.story-dot.active { background: var(--wp-accent); width: 20px; border-radius: 4px; }
+
 /* ─── Insights subtab nav (Overview/Trends/Breakdown/Records) ─── */
 .subtab-nav { display: flex; gap: 4px; border-bottom: 1px solid var(--wp-border); }
 .subtab-btn {

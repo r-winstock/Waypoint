@@ -342,6 +342,7 @@ function waypoint() {
       if (tab === 'insights' && !this.insights.data) this.loadInsights();
       if (tab === 'insights' && !this.insightsHighlights) this.loadInsightsHighlights();
       if (tab === 'insights' && !this.heatmapData) this.loadHeatmap();
+      if (tab === 'insights' && !this.insightsStories) this.loadInsightsStories();
       if (tab === 'places' && !this.places.data) this.loadPlaces();
       if (tab === 'cities' && !this.cities.data) this.loadCities();
       if (tab === 'world' && !this.world.data) this.loadWorld();
@@ -811,6 +812,153 @@ function waypoint() {
     },
     insightsBreakdownVisitsMax() {
       return Math.max(1, ...this.insightsBreakdownVisitsSorted().map((v) => v.duration_s));
+    },
+
+    // ─── Insights: "did you know" story card (Overview subtab hero) ───
+    // Real computed narrative sentences, not another stat tile - per
+    // Richard's own feedback that the first version, however accurate,
+    // read as a report about him rather than something he was part of: "I
+    // wanna feel PART of the stats, not a reader." Three concrete changes
+    // from that feedback: (1) paging is entirely user-driven (dots/arrows),
+    // no auto-advance timer running a slideshow at the viewer: intrigue
+    // needs delivered at the viewer's own pace, not on someone else's
+    // clock. (2) the card body itself is a doorway, not a caption - clicking
+    // it (see storyNavigate) lands on the actual Trip/Place/Country the
+    // story is about wherever one genuinely exists, rather than every
+    // insight being a dead end. (3) a real photo background wherever the
+    // story has one true subject to show (see storyImageQuery), reusing
+    // the exact same imageUrl() system already powering Trip/Place/City
+    // cards, rather than a generic icon standing in for the place itself.
+    insightsStories: null,
+    storyIndex: 0,
+    storyImgFailed: false,
+    async loadInsightsStories() {
+      try {
+        const res = await fetch('/api/insights/stories');
+        const data = await res.json();
+        // Fisher-Yates - shuffled once per load so the paging order isn't
+        // the same every time, not re-shuffled on every page (that would
+        // make "next" jump to an already-seen story).
+        const stories = data.stories;
+        for (let i = stories.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [stories[i], stories[j]] = [stories[j], stories[i]];
+        }
+        this.insightsStories = stories;
+        this.storyIndex = 0;
+        this.storyImgFailed = false;
+      } catch (e) { console.error('Failed to load insights stories', e); }
+    },
+    nextStory() {
+      if (!this.insightsStories || !this.insightsStories.length) return;
+      this.storyIndex = (this.storyIndex + 1) % this.insightsStories.length;
+      this.storyImgFailed = false;
+    },
+    prevStory() {
+      if (!this.insightsStories || !this.insightsStories.length) return;
+      this.storyIndex = (this.storyIndex - 1 + this.insightsStories.length) % this.insightsStories.length;
+      this.storyImgFailed = false;
+    },
+    goToStory(i) {
+      this.storyIndex = i;
+      this.storyImgFailed = false;
+    },
+    currentStory() {
+      return this.insightsStories && this.insightsStories.length ? this.insightsStories[this.storyIndex] : null;
+    },
+    // Only the story types with one real, specific subject get a photo -
+    // "no image beats a wrong one", the same principle images.py's own
+    // fetch pipeline already follows for card photos generally.
+    storyImageQuery(story) {
+      if (!story) return null;
+      switch (story.type) {
+        case 'most_visited':
+          return { query: story.name, fallback: story.city, geo: false, hint: story.city };
+        case 'longest_trip':
+          return { query: story.primary_city || story.primary_country, fallback: null, geo: true, hint: story.primary_country };
+        case 'newest_country':
+          return { query: story.country, fallback: null, geo: true, hint: null };
+        default:
+          return null;
+      }
+    },
+    // Which story types land somewhere real on click - deliberately not
+    // every type. peak_year/peak_month/longest_gap/moon_trips/country_count
+    // etc. describe a pattern across the whole dataset, not one specific
+    // Trip/Place/Country to land on - forcing a fake destination for those
+    // would be worse than simply not making them clickable.
+    storyHasNav(story) {
+      return !!story && [
+        'most_visited', 'longest_trip', 'busiest_day', 'newest_country', 'top_category',
+      ].includes(story.type);
+    },
+    async storyNavigate(story) {
+      if (!story || !this.storyHasNav(story)) return;
+      switch (story.type) {
+        case 'most_visited':
+          this.switchTab('places');
+          await this.openCategory(story.category);
+          this.togglePlaceVisits(story.place_id);
+          break;
+        case 'longest_trip':
+          this.switchTab('trips');
+          this.openTrip(story.trip_id);
+          break;
+        case 'busiest_day':
+          this.switchTab('day');
+          this.goToDate(story.day);
+          break;
+        case 'newest_country':
+          this.switchTab('world');
+          this.openCountry(story.country_code);
+          break;
+        case 'top_category':
+          this.switchTab('places');
+          this.openCategory(story.category);
+          break;
+        default:
+          break;
+      }
+    },
+    storyIcon(type) {
+      const icons = {
+        circumference: '🌍', most_visited: '📍', longest_trip: '🧳', busiest_day: '📅',
+        peak_year: '📈', peak_month: '☀️', longest_gap: '🏠', country_count: '🌎',
+        newest_country: '🆕', top_category: '⭐', moon_trips: '🌙', trip_frequency: '✈️',
+      };
+      return icons[type] || '💭';
+    },
+    storyText(story) {
+      switch (story.type) {
+        case 'circumference':
+          return `You've travelled ${formatMiles(story.total_distance_m)} in total, enough to circle the Earth ${(story.total_distance_m / 40075000).toFixed(1)} times over.`;
+        case 'most_visited':
+          return `Nowhere beats ${story.name}${story.city ? ' in ' + story.city : ''}. You've been back ${story.visit_count} times.`;
+        case 'longest_trip':
+          return `Your longest trip yet: ${story.days} day${story.days === 1 ? '' : 's'} in ${story.primary_city || story.primary_country || 'one place'}.`;
+        case 'busiest_day':
+          return `Your busiest day ever was ${this.formatDayString(story.day)}, with ${story.visit_count} separate visits packed in.`;
+        case 'peak_year':
+          return `${story.year} was your biggest travel year yet, covering ${formatMiles(story.distance_m)}.`;
+        case 'peak_month':
+          return `You're clearly a ${this.monthName(story.month)} traveller. More distance covered then than any other month.`;
+        case 'longest_gap':
+          return `The longest you've ever gone without a trip is ${story.days} days.`;
+        case 'country_count':
+          return `You've set foot in ${story.count} countries, roughly ${story.percent_of_world}% of every country on Earth.`;
+        case 'newest_country':
+          return `Your most recently discovered country is ${story.country}, first visited in ${story.year}.`;
+        case 'top_category':
+          return `Away from home, you spend more time in ${story.category.toLowerCase()} than anywhere else.`;
+        case 'moon_trips': {
+          const trips = (story.flying_m / 384400000).toFixed(1);
+          return `You've flown far enough to reach the Moon ${trips} time${trips === '1.0' ? '' : 's'} over.`;
+        }
+        case 'trip_frequency':
+          return `You've taken ${story.trip_count} trips, averaging ${story.avg_trip_days} days each.`;
+        default:
+          return '';
+      }
     },
 
     heatmapYear: new Date().getFullYear(),

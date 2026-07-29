@@ -474,6 +474,31 @@
 
       <!-- ─── Overview ─── -->
       <div x-show="insights.subtab==='overview'">
+        <template x-if="currentStory()">
+          <div class="mb-3">
+            <div class="story-card" :class="!storyImgFailed && storyImageQuery(currentStory()) && 'has-photo'">
+              <img x-show="storyImageQuery(currentStory()) && !storyImgFailed" class="card-photo-img"
+                   :src="storyImageQuery(currentStory()) ? imageUrl(storyImageQuery(currentStory()).query, storyImageQuery(currentStory()).fallback, storyImageQuery(currentStory()).geo, storyImageQuery(currentStory()).hint) : ''"
+                   @error="storyImgFailed = true">
+              <div x-show="storyImageQuery(currentStory()) && !storyImgFailed" class="card-photo-scrim"></div>
+              <div class="story-card-content" :class="storyHasNav(currentStory()) && 'clickable'" @click="storyNavigate(currentStory())">
+                <div class="story-card-icon" x-text="storyIcon(currentStory().type)"></div>
+                <div class="story-card-text" x-text="storyText(currentStory())"></div>
+                <div class="story-card-cta" x-show="storyHasNav(currentStory())">Tap to explore your history →</div>
+              </div>
+            </div>
+            <div class="story-paging">
+              <button class="btn-icon" @click="prevStory()" title="Previous"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+              <div class="story-dots">
+                <template x-for="(s, i) in insightsStories" :key="i">
+                  <button class="story-dot" :class="i === storyIndex && 'active'" @click="goToStory(i)"></button>
+                </template>
+              </div>
+              <button class="btn-icon" @click="nextStory()" title="Next"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+            </div>
+          </div>
+        </template>
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
           <div class="stat-tile insights-hero-tile">
             <div class="label">Total distance travelled</div>
