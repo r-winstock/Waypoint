@@ -40,7 +40,19 @@ def get_trips(page: int = 1, page_size: int = 24, session: Session = Depends(db_
         # wrongly merge into one destination card. Unnamed (computed) trips
         # are unaffected - name is always None for them, so the key reduces
         # to exactly the grouping already in place before Trip.name existed.
-        key = (t.name, t.primary_city, t.primary_country)
+        #
+        # Grouped on primary_country_code, not the raw primary_country
+        # string - confirmed live that the same country can be geocoded as
+        # a bilingual/localised string at one point ("Éire / Ireland",
+        # "España") and a plain English one at another ("Ireland", "Spain"),
+        # splitting the same real destination into two backend groups that
+        # both then render as the identical English name via
+        # country_name_en() below - a genuine duplicate card, and a
+        # duplicate Alpine :key crash since the frontend key is built from
+        # that same (identical, post-conversion) displayed value. The code
+        # is stable regardless of which raw string a given trip happened to
+        # be geocoded with.
+        key = (t.name, t.primary_city, t.primary_country_code)
         if key not in groups:
             groups[key] = {
                 "name": t.name,
