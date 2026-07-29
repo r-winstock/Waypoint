@@ -742,47 +742,145 @@
 
       <!-- ─── Records ─── -->
       <div x-show="insights.subtab==='records'">
-        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <template x-if="insightsHighlights && insightsHighlights.longest_trip">
-            <div class="stat-tile">
-              <div class="label">Longest trip</div>
-              <div class="value" style="font-size: 18px" x-text="insightsHighlights.longest_trip.primary_city || insightsHighlights.longest_trip.primary_country || 'Trip'"></div>
-              <div class="detail" x-text="insightsHighlights.longest_trip.days + ' day' + (insightsHighlights.longest_trip.days === 1 ? '' : 's')"></div>
+        <template x-if="insightsHighlights">
+          <div>
+            <h2 class="text-base font-semibold mb-2">Trips</h2>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+              <template x-if="insightsHighlights.longest_trip">
+                <div class="stat-tile record-card clickable" @click="switchTab('trips'); openTrip(insightsHighlights.longest_trip.trip_id)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-culture)"><span>🧳</span></div>
+                    <div class="label">Longest trip</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.longest_trip.primary_city || insightsHighlights.longest_trip.primary_country || 'Trip'"></div>
+                  <div class="detail" x-text="insightsHighlights.longest_trip.days + ' day' + (insightsHighlights.longest_trip.days === 1 ? '' : 's')"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.avg_trip_days">
+                <div class="stat-tile record-card">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-other)"><span>📊</span></div>
+                    <div class="label">Average trip length</div>
+                  </div>
+                  <div class="value tabular" x-text="insightsHighlights.avg_trip_days + ' days'"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.longest_gap_days !== null">
+                <div class="stat-tile record-card">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-home)"><span>🏠</span></div>
+                    <div class="label">Longest gap between trips</div>
+                  </div>
+                  <div class="value tabular" x-text="insightsHighlights.longest_gap_days + ' days'"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.days_since_last_trip !== null">
+                <div class="stat-tile record-card">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-mode-walking)"><span>⏱️</span></div>
+                    <div class="label">Since your last trip</div>
+                  </div>
+                  <div class="value tabular" x-text="insightsHighlights.days_since_last_trip + ' day' + (insightsHighlights.days_since_last_trip === 1 ? '' : 's')"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.busiest_trip_year">
+                <div class="stat-tile record-card">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-mode-taxi)"><span>📈</span></div>
+                    <div class="label">Most trips in a year</div>
+                  </div>
+                  <div class="value tabular" x-text="insightsHighlights.busiest_trip_year.year"></div>
+                  <div class="detail" x-text="insightsHighlights.busiest_trip_year.trip_count + ' trip' + (insightsHighlights.busiest_trip_year.trip_count === 1 ? '' : 's')"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.first_trip">
+                <div class="stat-tile record-card clickable" @click="switchTab('trips'); openTrip(insightsHighlights.first_trip.trip_id)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-parks)"><span>🌱</span></div>
+                    <div class="label">First trip on record</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.first_trip.primary_city || insightsHighlights.first_trip.primary_country || 'Trip'"></div>
+                  <div class="detail" x-text="Math.round(insightsHighlights.first_trip.years_ago) + ' year' + (Math.round(insightsHighlights.first_trip.years_ago) === 1 ? '' : 's') + ' ago · ' + formatDayString(insightsHighlights.first_trip.day)"></div>
+                </div>
+              </template>
             </div>
-          </template>
-          <template x-if="insightsHighlights && insightsHighlights.most_visited_place">
-            <div class="stat-tile">
-              <div class="label">Most-visited place</div>
-              <div class="value" style="font-size: 18px" x-text="insightsHighlights.most_visited_place.name"></div>
-              <div class="detail" x-text="insightsHighlights.most_visited_place.visit_count + ' visits' + (insightsHighlights.most_visited_place.city ? ' · ' + insightsHighlights.most_visited_place.city : '')"></div>
+
+            <h2 class="text-base font-semibold mb-2">Places</h2>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+              <template x-if="insightsHighlights.most_visited_place">
+                <div class="stat-tile record-card clickable" @click="openPlaceRecord(insightsHighlights.most_visited_place)">
+                  <div class="record-card-head">
+                    <div class="record-icon" :style="`background: ${categoryColorVar(insightsHighlights.most_visited_place.category)}`">
+                      <span x-text="categoryIcon(insightsHighlights.most_visited_place.category)"></span>
+                    </div>
+                    <div class="label">Most-visited place</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.most_visited_place.name"></div>
+                  <div class="detail" x-text="insightsHighlights.most_visited_place.visit_count + ' visits' + (insightsHighlights.most_visited_place.city ? ' · ' + insightsHighlights.most_visited_place.city : '')"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.most_visited_country">
+                <div class="stat-tile record-card clickable" @click="switchTab('world'); openCountry(insightsHighlights.most_visited_country.country_code)">
+                  <div class="record-card-head">
+                    <div class="record-icon" x-data="{imgFailed: false}" style="overflow: hidden">
+                      <img x-show="!imgFailed && insightsHighlights.most_visited_country.country_code" class="record-icon-flag" :src="flagImageUrl(insightsHighlights.most_visited_country.country_code)" @error="imgFailed = true">
+                      <span x-show="imgFailed || !insightsHighlights.most_visited_country.country_code">🌎</span>
+                    </div>
+                    <div class="label">Most-visited country</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.most_visited_country.country"></div>
+                  <div class="detail" x-text="insightsHighlights.most_visited_country.visit_count + ' visits'"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.most_visited_city">
+                <div class="stat-tile record-card clickable" @click="switchTab('cities'); openCity(insightsHighlights.most_visited_city.city)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-mode-train)"><span>🏙️</span></div>
+                    <div class="label">Most-visited city</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.most_visited_city.city"></div>
+                  <div class="detail" x-text="insightsHighlights.most_visited_city.visit_count + ' visits'"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.farthest_place">
+                <div class="stat-tile record-card clickable" @click="openPlaceRecord(insightsHighlights.farthest_place)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-mode-flying)"><span>✈️</span></div>
+                    <div class="label">Farthest from home</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.farthest_place.name"></div>
+                  <div class="detail" x-text="formatMiles(insightsHighlights.farthest_place.distance_m) + (insightsHighlights.farthest_place.city ? ' · ' + insightsHighlights.farthest_place.city : '')"></div>
+                </div>
+              </template>
             </div>
-          </template>
-          <template x-if="insightsHighlights && insightsHighlights.busiest_day">
-            <div class="stat-tile">
-              <div class="label">Busiest day ever</div>
-              <div class="value" style="font-size: 18px" x-text="formatDayString(insightsHighlights.busiest_day.day)"></div>
-              <div class="detail" x-text="insightsHighlights.busiest_day.visit_count + ' visits'"></div>
+
+            <h2 class="text-base font-semibold mb-2">Days &amp; journeys</h2>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <template x-if="insightsHighlights.busiest_day">
+                <div class="stat-tile record-card clickable" @click="switchTab('day'); goToDate(insightsHighlights.busiest_day.day)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-airports)"><span>📅</span></div>
+                    <div class="label">Busiest day ever</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="formatDayString(insightsHighlights.busiest_day.day)"></div>
+                  <div class="detail" x-text="insightsHighlights.busiest_day.visit_count + ' visits'"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.longest_journey">
+                <div class="stat-tile record-card clickable" @click="switchTab('day'); goToDate(insightsHighlights.longest_journey.day)">
+                  <div class="record-card-head">
+                    <div class="record-icon" :style="`background: var(--wp-mode-${insightsHighlights.longest_journey.mode})`">
+                      <i :data-lucide="modeIcon(insightsHighlights.longest_journey.mode)" class="w-3.5 h-3.5" style="color: #fff"></i>
+                    </div>
+                    <div class="label">Longest single journey</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="formatMiles(insightsHighlights.longest_journey.distance_m)"></div>
+                  <div class="detail" x-text="(insightsHighlights.longest_journey.start_name || insightsHighlights.longest_journey.end_name) ? (insightsHighlights.longest_journey.start_name || '?') + ' → ' + (insightsHighlights.longest_journey.end_name || '?') : 'One long ' + insightsHighlights.longest_journey.mode + ' leg'"></div>
+                </div>
+              </template>
             </div>
-          </template>
-          <template x-if="insightsHighlights && insightsHighlights.avg_trip_days">
-            <div class="stat-tile">
-              <div class="label">Average trip length</div>
-              <div class="value tabular" x-text="insightsHighlights.avg_trip_days + ' days'"></div>
-            </div>
-          </template>
-          <template x-if="insightsHighlights && insightsHighlights.longest_gap_days !== null">
-            <div class="stat-tile">
-              <div class="label">Longest gap between trips</div>
-              <div class="value tabular" x-text="insightsHighlights.longest_gap_days + ' days'"></div>
-            </div>
-          </template>
-          <template x-if="insightsHighlights && insightsHighlights.days_since_last_trip !== null">
-            <div class="stat-tile">
-              <div class="label">Since your last trip</div>
-              <div class="value tabular" x-text="insightsHighlights.days_since_last_trip + ' day' + (insightsHighlights.days_since_last_trip === 1 ? '' : 's')"></div>
-            </div>
-          </template>
-        </div>
+          </div>
+        </template>
       </div>
     </div>
 

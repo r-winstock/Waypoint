@@ -944,6 +944,16 @@ function waypoint() {
           break;
       }
     },
+    // Shared click-through for any Records card that lands on a specific
+    // Place (most-visited, farthest-from-home) - same three-step navigation
+    // storyNavigate's own 'most_visited' case already uses, factored out so
+    // Records doesn't have to duplicate it per card.
+    async openPlaceRecord(record) {
+      if (!record || !record.place_id) return;
+      this.switchTab('places');
+      await this.openCategory(record.category);
+      this.togglePlaceVisits(record.place_id);
+    },
     storyIcon(type) {
       const icons = {
         circumference: '🌍', most_visited: '📍', longest_trip: '🧳', busiest_day: '📅',

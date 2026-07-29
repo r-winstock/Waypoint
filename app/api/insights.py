@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from math import atan2, cos, radians, sin, sqrt
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
@@ -59,6 +60,15 @@ def _travel_totals(session: Session, start_ts: int, end_ts: int) -> dict[str, di
         totals[mode]["distance_m"] += distance_m
         totals[mode]["duration_s"] += duration_s
     return totals
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    earth_radius_m = 6_371_000.0
+    p1, p2 = radians(lat1), radians(lat2)
+    dphi = radians(lat2 - lat1)
+    dlambda = radians(lon2 - lon1)
+    a = sin(dphi / 2) ** 2 + cos(p1) * cos(p2) * sin(dlambda / 2) ** 2
+    return 2 * earth_radius_m * atan2(sqrt(a), sqrt(1 - a))
 
 
 def _visit_totals(session: Session, start_ts: int, end_ts: int) -> dict[str, float]:
@@ -138,6 +148,126 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         .first()
     )
 
+    # Widening Records beyond the original 6 (longest trip / most-visited
+    # place / busiest day / avg trip length / longest gap / days since last
+    # trip) - those were all "trip-shape" stats; these add a place-shape one
+    # (country/city/farthest), a calendar one (most trips in a year, first
+    # trip on record) and a single-leg one (longest journey), so the tab
+    # reads as a real spread of record types rather than six variations on
+    # "how long was a trip".
+    country_row = (
+        session.query(Place.country_code, Place.country, func.count(Visit.id).label("cnt"))
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.country_code.isnot(None))
+        .group_by(Place.country_code)
+        .order_by(func.count(Visit.id).desc())
+        .first()
+    )
+
+    city_row = (
+        session.query(Place.city, func.count(Visit.id).label("cnt"))
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.city.isnot(None))
+        .group_by(Place.city)
+        .order_by(func.count(Visit.id).desc())
+        .first()
+    )
+
+    # Trip *count* per calendar year, not distance - the yearly distance
+    # trend already has its own home in Trends (and in the Overview
+    # "peak_year" story), so this deliberately measures something else:
+    # how many separate trips were packed into one year.
+    trip_year_expr = func.strftime("%Y", Trip.start_ts, "unixepoch")
+    busiest_trip_year_row = (
+        session.query(trip_year_expr.label("year"), func.count(Trip.id).label("cnt"))
+        .group_by("year")
+        .order_by(func.count(Trip.id).desc())
+        .first()
+    )
+
+    first_trip_row = (
+        session.query(Trip.id, Trip.primary_city, Trip.primary_country, Trip.start_ts)
+        .order_by(Trip.start_ts.asc())
+        .first()
+    )
+
+    # Farthest place ever visited, as the crow flies from home - only
+    # possible once home_lat/home_lon are set (see settings.py's own
+    # curl-only bootstrapping note); at personal-device scale (hundreds, not
+    # millions, of distinct places) a plain Python max() over every place is
+    # simpler and plenty fast, no need for a spatial index.
+    farthest_place = None
+    home_lat_str = get_setting(session, "home_lat", "")
+    home_lon_str = get_setting(session, "home_lon", "")
+    if home_lat_str and home_lon_str:
+        home_lat, home_lon = float(home_lat_str), float(home_lon_str)
+        place_rows = (
+            session.query(
+                Place.id, Place.name, Place.city, Place.country, Place.category, Place.lat_round, Place.lon_round
+            )
+            .join(Visit, Visit.place_id == Place.id)
+            .filter(Place.name.isnot(None))
+            .distinct()
+            .all()
+        )
+        best_row, best_dist = None, -1.0
+        for p in place_rows:
+            d = _haversine_m(home_lat, home_lon, p.lat_round, p.lon_round)
+            if d > best_dist:
+                best_row, best_dist = p, d
+        if best_row:
+            farthest_place = {
+                "place_id": best_row.id,
+                "name": best_row.name,
+                "city": best_row.city,
+                "country": best_row.country,
+                "category": best_row.category,
+                "distance_m": best_dist,
+            }
+
+    # Longest single travel leg ever taken (one TripSegment, not a whole
+    # trip). start_visit_id/end_visit_id are only ever populated for
+    # source="owntracks" segments (see TripSegment/Visit's own docstrings) -
+    # every imported segment (google_import, kml_import - i.e. almost all
+    # real history) leaves them null, so the FK can't be used to name the
+    # endpoints. Instead, find the nearest Visit ending before this segment
+    # started and the nearest one starting after it ended - the same
+    # "whichever visit sits either side of this gap in time" relationship
+    # the segment already has in every timeline view, just derived by time
+    # instead of a join.
+    longest_segment_row = (
+        session.query(TripSegment.mode, TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
+        .order_by(TripSegment.distance_m.desc())
+        .first()
+    )
+    longest_segment_start_name = longest_segment_end_name = None
+    if longest_segment_row:
+        # Deliberately not filtering to Place.name.isnot(None) here - doing so
+        # skips straight past a genuinely-nearest but never-geocoded stub
+        # Place (e.g. a brief airport connection Nominatim was never asked
+        # about) to whatever *named* visit happens to come next, which for a
+        # long-haul flight can be days later and back at the other end of the
+        # trip - a confidently wrong "X to X" beats no answer, which this
+        # exists specifically to avoid. name -> city -> country fallback,
+        # None (shown as "Unknown") only when the nearest visit truly has
+        # nothing resolved at all.
+        before_row = (
+            session.query(Place.name, Place.city, Place.country)
+            .join(Visit, Visit.place_id == Place.id)
+            .filter(Visit.end_ts <= longest_segment_row.start_ts)
+            .order_by(Visit.end_ts.desc())
+            .first()
+        )
+        after_row = (
+            session.query(Place.name, Place.city, Place.country)
+            .join(Visit, Visit.place_id == Place.id)
+            .filter(Visit.start_ts >= longest_segment_row.end_ts)
+            .order_by(Visit.start_ts.asc())
+            .first()
+        )
+        longest_segment_start_name = (before_row.name or before_row.city or before_row.country) if before_row else None
+        longest_segment_end_name = (after_row.name or after_row.city or after_row.country) if after_row else None
+
     return {
         "total_visits": total_visits,
         "total_distance_m": total_distance_m,
@@ -172,6 +302,46 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
                 "visit_count": most_visited_row.cnt,
             }
             if most_visited_row
+            else None
+        ),
+        "most_visited_country": (
+            {
+                "country": country_name_en(country_row.country_code, country_row.country),
+                "country_code": country_row.country_code,
+                "visit_count": country_row.cnt,
+            }
+            if country_row
+            else None
+        ),
+        "most_visited_city": (
+            {"city": city_row.city, "visit_count": city_row.cnt} if city_row else None
+        ),
+        "busiest_trip_year": (
+            {"year": busiest_trip_year_row.year, "trip_count": busiest_trip_year_row.cnt}
+            if busiest_trip_year_row
+            else None
+        ),
+        "first_trip": (
+            {
+                "trip_id": first_trip_row.id,
+                "primary_city": first_trip_row.primary_city,
+                "primary_country": first_trip_row.primary_country,
+                "day": datetime.fromtimestamp(first_trip_row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+                "years_ago": round((int(datetime.now(timezone.utc).timestamp()) - first_trip_row.start_ts) / 86400 / 365.25, 1),
+            }
+            if first_trip_row
+            else None
+        ),
+        "farthest_place": farthest_place,
+        "longest_journey": (
+            {
+                "mode": longest_segment_row.mode,
+                "distance_m": longest_segment_row.distance_m,
+                "start_name": longest_segment_start_name,
+                "end_name": longest_segment_end_name,
+                "day": datetime.fromtimestamp(longest_segment_row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+            }
+            if longest_segment_row and longest_segment_row.distance_m > 0
             else None
         ),
     }
