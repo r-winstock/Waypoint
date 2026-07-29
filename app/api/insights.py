@@ -235,38 +235,67 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     # "whichever visit sits either side of this gap in time" relationship
     # the segment already has in every timeline view, just derived by time
     # instead of a join.
-    longest_segment_row = (
+    #
+    # The segment's own distance_m is trusted almost everywhere else in this
+    # app (imported verbatim from Google's own topCandidate.distanceMeters -
+    # see import_google_timeline.py's own reasoning for not re-deriving it),
+    # and spot-checking the 20 longest flights confirmed that trust is
+    # earned in the overwhelming majority of cases (stored value within a
+    # few % of the real endpoint-to-endpoint distance). But exactly one real
+    # segment in this dataset was a genuine outlier - Google's own figure
+    # ~3x the true straight-line distance between its resolved endpoints,
+    # which the "X -> Y, N mi" phrasing on this card would otherwise repeat
+    # as a confidently wrong headline number. Since this card already has to
+    # resolve real coordinates for its endpoint labels anyway, checking the
+    # top handful of candidates against their own true distance and ranking
+    # by *that* costs little and can't be fooled by a single bad upstream
+    # number the way "just trust the biggest stored value" can.
+    LONGEST_JOURNEY_CANDIDATES = 25
+    candidate_rows = (
         session.query(TripSegment.mode, TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
         .order_by(TripSegment.distance_m.desc())
-        .first()
+        .limit(LONGEST_JOURNEY_CANDIDATES)
+        .all()
     )
-    longest_segment_start_name = longest_segment_end_name = None
-    if longest_segment_row:
+
+    def _nearest_place(filter_expr, order_expr):
+        return (
+            session.query(Place.name, Place.city, Place.country, Place.lat_round, Place.lon_round)
+            .join(Visit, Visit.place_id == Place.id)
+            .filter(filter_expr)
+            .order_by(order_expr)
+            .first()
+        )
+
+    best_candidate = None  # (real_distance_m, mode, start_ts, before_row, after_row)
+    for cand in candidate_rows:
         # Deliberately not filtering to Place.name.isnot(None) here - doing so
         # skips straight past a genuinely-nearest but never-geocoded stub
         # Place (e.g. a brief airport connection Nominatim was never asked
         # about) to whatever *named* visit happens to come next, which for a
         # long-haul flight can be days later and back at the other end of the
         # trip - a confidently wrong "X to X" beats no answer, which this
-        # exists specifically to avoid. name -> city -> country fallback,
-        # None (shown as "Unknown") only when the nearest visit truly has
-        # nothing resolved at all.
-        before_row = (
-            session.query(Place.name, Place.city, Place.country)
-            .join(Visit, Visit.place_id == Place.id)
-            .filter(Visit.end_ts <= longest_segment_row.start_ts)
-            .order_by(Visit.end_ts.desc())
-            .first()
+        # exists specifically to avoid.
+        before_row = _nearest_place(Visit.end_ts <= cand.start_ts, Visit.end_ts.desc())
+        after_row = _nearest_place(Visit.start_ts >= cand.end_ts, Visit.start_ts.asc())
+        if not before_row or not after_row:
+            continue
+        real_distance_m = _haversine_m(
+            before_row.lat_round, before_row.lon_round, after_row.lat_round, after_row.lon_round
         )
-        after_row = (
-            session.query(Place.name, Place.city, Place.country)
-            .join(Visit, Visit.place_id == Place.id)
-            .filter(Visit.start_ts >= longest_segment_row.end_ts)
-            .order_by(Visit.start_ts.asc())
-            .first()
-        )
-        longest_segment_start_name = (before_row.name or before_row.city or before_row.country) if before_row else None
-        longest_segment_end_name = (after_row.name or after_row.city or after_row.country) if after_row else None
+        if best_candidate is None or real_distance_m > best_candidate[0]:
+            best_candidate = (real_distance_m, cand.mode, cand.start_ts, before_row, after_row)
+
+    longest_journey = None
+    if best_candidate:
+        real_distance_m, longest_mode, longest_start_ts, before_row, after_row = best_candidate
+        longest_journey = {
+            "mode": longest_mode,
+            "distance_m": real_distance_m,
+            "start_name": before_row.name or before_row.city or before_row.country,
+            "end_name": after_row.name or after_row.city or after_row.country,
+            "day": datetime.fromtimestamp(longest_start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+        }
 
     return {
         "total_visits": total_visits,
@@ -333,17 +362,7 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
             else None
         ),
         "farthest_place": farthest_place,
-        "longest_journey": (
-            {
-                "mode": longest_segment_row.mode,
-                "distance_m": longest_segment_row.distance_m,
-                "start_name": longest_segment_start_name,
-                "end_name": longest_segment_end_name,
-                "day": datetime.fromtimestamp(longest_segment_row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
-            }
-            if longest_segment_row and longest_segment_row.distance_m > 0
-            else None
-        ),
+        "longest_journey": longest_journey,
     }
 
 
