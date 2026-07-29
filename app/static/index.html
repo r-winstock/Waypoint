@@ -622,7 +622,7 @@
         <div class="mb-2">
           <div class="text-base font-semibold flex items-center gap-2" x-show="insightsSeasonalityPeakMonth()">
             <span>☀️</span>
-            <span x-text="'You travel most in ' + monthName(insightsSeasonalityPeakMonth().month)"></span>
+            <span x-text="insightsSeasonalityPeakMonth() ? ('You travel most in ' + monthName(insightsSeasonalityPeakMonth().month)) : ''"></span>
           </div>
         </div>
         <div class="seasonality-chart mb-6">
@@ -985,8 +985,8 @@
 
           <div class="flex items-center justify-center gap-3 mt-5" x-show="cities.data && cities.data.total_pages > 1">
             <button class="btn-icon" :disabled="cities.page <= 1" @click="changeCitiesPage(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-            <span class="text-sm" style="color: var(--wp-fg-muted)" x-text="'Page ' + cities.page + ' of ' + cities.data.total_pages"></span>
-            <button class="btn-icon" :disabled="cities.page >= cities.data.total_pages" @click="changeCitiesPage(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+            <span class="text-sm" style="color: var(--wp-fg-muted)" x-text="cities.data ? ('Page ' + cities.page + ' of ' + cities.data.total_pages) : ''"></span>
+            <button class="btn-icon" :disabled="!cities.data || cities.page >= cities.data.total_pages" @click="changeCitiesPage(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
           </div>
         </div>
       </template>
@@ -1152,7 +1152,7 @@
            got it right rather than trusting one silently. Empty (with no
            "nothing found" message of its own) when GOOGLE_PLACES_API_KEY
            isn't configured - never presented as a missing/broken feature. -->
-      <template x-if="!placeEdit.loadingAlternatives && placeEdit.googleAlternatives.length">
+      <template x-if="!placeEdit.loadingAlternatives && placeEdit.googleAlternatives && placeEdit.googleAlternatives.length">
         <div>
           <label class="field-label">Nearby alternatives (Google)</label>
           <div class="mb-3">
