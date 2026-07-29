@@ -465,149 +465,284 @@
 
     <!-- ═══════════ INSIGHTS ═══════════ -->
     <div x-show="tab==='insights'">
-      <h2 class="text-base font-semibold mb-2">All-time highlights</h2>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" x-show="insightsHighlights">
-        <div class="stat-tile">
-          <div class="label">Total visits</div>
-          <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_visits : '—'"></div>
-        </div>
-        <div class="stat-tile">
-          <div class="label">Total distance</div>
-          <div class="value" x-text="insightsHighlights ? formatMiles(insightsHighlights.total_distance_m) : '—'"></div>
-        </div>
-        <div class="stat-tile">
-          <div class="label">Countries visited</div>
-          <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_countries : '—'"></div>
-        </div>
-        <div class="stat-tile">
-          <div class="label">Cities visited</div>
-          <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_cities : '—'"></div>
-        </div>
-        <template x-if="insightsHighlights && insightsHighlights.busiest_day">
-          <div class="stat-tile">
-            <div class="label">Busiest day ever</div>
-            <div class="value" style="font-size: 18px" x-text="formatDayString(insightsHighlights.busiest_day.day)"></div>
-            <div class="detail" x-text="insightsHighlights.busiest_day.visit_count + ' visits'"></div>
-          </div>
-        </template>
-        <template x-if="insightsHighlights && insightsHighlights.longest_trip">
-          <div class="stat-tile">
-            <div class="label">Longest trip</div>
-            <div class="value" style="font-size: 18px" x-text="insightsHighlights.longest_trip.primary_city || insightsHighlights.longest_trip.primary_country || 'Trip'"></div>
-            <div class="detail" x-text="insightsHighlights.longest_trip.days + ' day' + (insightsHighlights.longest_trip.days === 1 ? '' : 's')"></div>
-          </div>
-        </template>
-        <template x-if="insightsHighlights && insightsHighlights.most_visited_place">
-          <div class="stat-tile">
-            <div class="label">Most-visited place</div>
-            <div class="value" style="font-size: 18px" x-text="insightsHighlights.most_visited_place.name"></div>
-            <div class="detail" x-text="insightsHighlights.most_visited_place.visit_count + ' visits' + (insightsHighlights.most_visited_place.city ? ' · ' + insightsHighlights.most_visited_place.city : '')"></div>
-          </div>
-        </template>
+      <div class="subtab-nav mb-5">
+        <button class="subtab-btn" :class="insights.subtab==='overview' && 'active'" @click="switchInsightsSubtab('overview')">Overview</button>
+        <button class="subtab-btn" :class="insights.subtab==='trends' && 'active'" @click="switchInsightsSubtab('trends')">Trends</button>
+        <button class="subtab-btn" :class="insights.subtab==='breakdown' && 'active'" @click="switchInsightsSubtab('breakdown')">Breakdown</button>
+        <button class="subtab-btn" :class="insights.subtab==='records' && 'active'" @click="switchInsightsSubtab('records')">Records</button>
       </div>
 
-      <div class="flex items-center justify-between mb-2">
-        <h2 class="text-base font-semibold">Activity heatmap</h2>
-        <div class="flex items-center gap-2">
-          <button class="btn-icon" @click="changeHeatmapYear(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-          <span class="text-sm tabular" x-text="heatmapYear"></span>
-          <button class="btn-icon" @click="changeHeatmapYear(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
-        </div>
-      </div>
-      <div class="heatmap-scroll mb-6">
-        <div class="flex gap-2 mb-1">
-          <div class="heatmap-weekday-labels-spacer"></div>
-          <div class="heatmap-months">
-            <template x-for="(label, wi) in heatmapMonthLabels()" :key="wi">
-              <div class="heatmap-month-label" x-text="label"></div>
-            </template>
+      <!-- ─── Overview ─── -->
+      <div x-show="insights.subtab==='overview'">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+          <div class="stat-tile insights-hero-tile">
+            <div class="label">Total distance travelled</div>
+            <div class="value" style="font-size: 30px" x-text="insightsHighlights ? formatMiles(insightsHighlights.total_distance_m) : '—'"></div>
+            <div class="detail" x-show="earthCircumferences() !== null" x-text="'That\'s circling the Earth ' + earthCircumferences() + ' time' + (earthCircumferences() === '1.0' ? '' : 's')"></div>
+          </div>
+          <div class="stat-tile insights-hero-tile">
+            <div class="label">Days spent travelling</div>
+            <div class="value" style="font-size: 30px" x-text="insightsHighlights ? insightsHighlights.total_trip_days : '—'"></div>
+            <div class="detail" x-show="insightsHighlights && insightsHighlights.avg_trip_days" x-text="'averaging ' + (insightsHighlights && insightsHighlights.avg_trip_days) + ' days per trip'"></div>
           </div>
         </div>
-        <div class="flex gap-2">
-          <div class="heatmap-weekday-labels">
-            <div class="heatmap-weekday-label"></div>
-            <div class="heatmap-weekday-label" x-text="'Mon'"></div>
-            <div class="heatmap-weekday-label"></div>
-            <div class="heatmap-weekday-label" x-text="'Wed'"></div>
-            <div class="heatmap-weekday-label"></div>
-            <div class="heatmap-weekday-label" x-text="'Fri'"></div>
-            <div class="heatmap-weekday-label"></div>
-          </div>
-          <div class="heatmap-grid">
-            <template x-for="(week, wi) in heatmapWeeks()" :key="wi">
-              <div class="heatmap-week">
-                <template x-for="(day, di) in week" :key="di">
-                  <div class="heatmap-cell" :class="[!day && 'empty-slot', day && 'clickable']" :style="heatmapCellStyle(day)" :title="heatmapCellTitle(day)" @click="openHeatmapDay(day)"></div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
 
-      <div class="flex items-center justify-between mb-4">
-        <button class="btn-icon" @click="changeMonth(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-        <div class="text-lg font-semibold display" x-text="monthLabel()"></div>
-        <button class="btn-icon" @click="changeMonth(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
-      </div>
-
-      <template x-if="insights.data">
-        <div>
-          <h2 class="text-base font-semibold mb-2">Travel</h2>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
-            <template x-for="(t, mode) in insights.data.travel" :key="mode">
-              <div class="stat-tile insights-tile">
-                <div class="flex items-center gap-3 mb-2">
-                  <div class="insights-tile-icon" :style="`background: var(--wp-mode-${mode})`">
-                    <i :data-lucide="modeIcon(mode)" class="w-4 h-4" style="color: #fff"></i>
-                  </div>
-                  <div class="flex-1">
-                    <div class="label capitalize" x-text="mode"></div>
-                    <div class="flex items-baseline gap-2">
-                      <div class="value" x-text="formatMiles(t.distance_m)"></div>
-                      <span class="insights-delta" x-show="trendDelta(t.trend) !== null" :class="trendDelta(t.trend) > 0 ? 'up' : (trendDelta(t.trend) < 0 ? 'down' : '')"
-                            x-text="trendDelta(t.trend) !== null ? (trendDelta(t.trend) > 0 ? '+' : '') + trendDelta(t.trend) + '%' : ''"></span>
-                    </div>
-                    <div class="detail" x-text="formatDuration(t.duration_s)"></div>
-                  </div>
-                </div>
-                <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="insights-sparkline">
-                  <path :d="sparklinePath(t.trend, 'area')" :style="`fill: var(--wp-mode-${mode}); opacity: 0.18`"></path>
-                  <path :d="sparklinePath(t.trend, 'line')" :style="`fill: none; stroke: var(--wp-mode-${mode}); stroke-width: 2`"></path>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <div class="stat-tile">
+            <div class="label">Total visits</div>
+            <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_visits : '—'"></div>
+          </div>
+          <div class="stat-tile">
+            <div class="label">Countries visited</div>
+            <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_countries : '—'"></div>
+          </div>
+          <div class="stat-tile">
+            <div class="label">Cities visited</div>
+            <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_cities : '—'"></div>
+          </div>
+          <div class="stat-tile" style="display: flex; flex-direction: column; align-items: center; justify-content: center">
+            <template x-if="insightsHighlights && insightsHighlights.life_percent !== null">
+              <div style="width: 100%">
+                <svg viewBox="0 0 200 115" class="life-gauge">
+                  <path d="M 10 100 A 90 90 0 0 1 190 100" class="life-gauge-track"></path>
+                  <path d="M 10 100 A 90 90 0 0 1 190 100" class="life-gauge-fill"
+                        :style="`stroke-dasharray: 282.74; stroke-dashoffset: ${lifeGaugeOffset(insightsHighlights.life_percent)}`"></path>
+                  <text x="100" y="95" text-anchor="middle" class="life-gauge-value" x-text="insightsHighlights.life_percent + '%'"></text>
                 </svg>
+                <div class="text-xs text-center" style="color: var(--wp-fg-dim); margin-top: -6px">of your life spent travelling</div>
               </div>
             </template>
-            <template x-if="!Object.keys(insights.data.travel).length">
-              <div class="empty-state">No travel recorded this month.</div>
-            </template>
-          </div>
-
-          <h2 class="text-base font-semibold mb-2">Visits</h2>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <template x-for="(v, category) in insights.data.visits" :key="category">
-              <div class="stat-tile insights-tile" style="cursor: pointer" @click="switchTab('places'); openCategory(category)">
-                <div class="flex items-center gap-3 mb-2">
-                  <div class="insights-tile-icon" :style="`background: ${categoryColorVar(category)}`">
-                    <span style="font-size: 16px; line-height: 1" x-text="categoryIcon(category)"></span>
-                  </div>
-                  <div class="flex-1">
-                    <div class="label" x-text="category"></div>
-                    <div class="flex items-baseline gap-2">
-                      <div class="value" x-text="formatDuration(v.duration_s)"></div>
-                      <span class="insights-delta" x-show="trendDelta(v.trend) !== null" :class="trendDelta(v.trend) > 0 ? 'up' : (trendDelta(v.trend) < 0 ? 'down' : '')"
-                            x-text="trendDelta(v.trend) !== null ? (trendDelta(v.trend) > 0 ? '+' : '') + trendDelta(v.trend) + '%' : ''"></span>
-                    </div>
-                  </div>
-                </div>
-                <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="insights-sparkline">
-                  <path :d="sparklinePath(v.trend, 'area')" :style="`fill: ${categoryColorVar(category)}; opacity: 0.18`"></path>
-                  <path :d="sparklinePath(v.trend, 'line')" :style="`fill: none; stroke: ${categoryColorVar(category)}; stroke-width: 2`"></path>
-                </svg>
+            <template x-if="insightsHighlights && insightsHighlights.life_percent === null">
+              <div class="text-xs" style="color: var(--wp-fg-dim)">
+                <div class="mb-1">Set your birthdate to see % of your life spent travelling:</div>
+                <code style="font-size: 11px; word-break: break-all" x-text="birthDateCurlCommand()"></code>
               </div>
             </template>
           </div>
         </div>
-      </template>
+
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-base font-semibold">Activity heatmap</h2>
+          <div class="flex items-center gap-2">
+            <button class="btn-icon" @click="changeHeatmapYear(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+            <span class="text-sm tabular" x-text="heatmapYear"></span>
+            <button class="btn-icon" @click="changeHeatmapYear(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+          </div>
+        </div>
+        <div class="heatmap-scroll mb-6">
+          <div class="flex gap-2 mb-1">
+            <div class="heatmap-weekday-labels-spacer"></div>
+            <div class="heatmap-months">
+              <template x-for="(label, wi) in heatmapMonthLabels()" :key="wi">
+                <div class="heatmap-month-label" x-text="label"></div>
+              </template>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <div class="heatmap-weekday-labels">
+              <div class="heatmap-weekday-label"></div>
+              <div class="heatmap-weekday-label" x-text="'Mon'"></div>
+              <div class="heatmap-weekday-label"></div>
+              <div class="heatmap-weekday-label" x-text="'Wed'"></div>
+              <div class="heatmap-weekday-label"></div>
+              <div class="heatmap-weekday-label" x-text="'Fri'"></div>
+              <div class="heatmap-weekday-label"></div>
+            </div>
+            <div class="heatmap-grid">
+              <template x-for="(week, wi) in heatmapWeeks()" :key="wi">
+                <div class="heatmap-week">
+                  <template x-for="(day, di) in week" :key="di">
+                    <div class="heatmap-cell" :class="[!day && 'empty-slot', day && 'clickable']" :style="heatmapCellStyle(day)" :title="heatmapCellTitle(day)" @click="openHeatmapDay(day)"></div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Trends ─── -->
+      <div x-show="insights.subtab==='trends'">
+        <div class="mb-6 history-chart-card">
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-xs" style="color: var(--wp-fg-dim)">Distance travelled per year</div>
+            <div class="text-xs font-medium tabular" style="color: var(--wp-accent-light); min-height: 15px"
+                 x-show="insightsYearlyHover" x-text="insightsYearlyHover && (insightsYearlyHover.year.year + ' · ' + formatMiles(insightsYearlyHover.year.distance_m))"></div>
+          </div>
+          <div style="position: relative">
+            <svg viewBox="0 0 1000 240" preserveAspectRatio="none" class="history-chart"
+                 @pointermove="insightsYearlyPointerMove($event)" @pointerleave="insightsYearlyPointerLeave()">
+              <path :d="insightsYearlyAreaPath()" class="history-chart-area"></path>
+              <path :d="insightsYearlyLinePath()" class="history-chart-line"></path>
+              <circle x-show="insightsYearlyPeakPoint()" :cx="insightsYearlyPeakPoint() && insightsYearlyPeakPoint().x" :cy="insightsYearlyPeakPoint() && insightsYearlyPeakPoint().y"
+                      r="4" class="history-chart-peak-dot"></circle>
+              <line x-show="insightsYearlyHover" :x1="insightsYearlyHover && insightsYearlyHover.x" :x2="insightsYearlyHover && insightsYearlyHover.x" y1="0" y2="200" class="history-chart-playhead"></line>
+            </svg>
+            <div class="history-chart-axis" style="position: absolute; left: 0; right: 0; bottom: 0; height: 16px; pointer-events: none">
+              <template x-for="tick in insightsYearlyTicks()" :key="tick.label">
+                <span class="history-chart-axis-label" :style="`position:absolute; left:${tick.x / 10}%; transform:translateX(-50%)`" x-text="tick.label"></span>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <div class="text-base font-semibold" x-show="insightsSeasonalityPeakMonth()">
+            <span x-text="'You travel most in ' + monthName(insightsSeasonalityPeakMonth().month)"></span>
+          </div>
+        </div>
+        <div class="seasonality-chart mb-6">
+          <template x-for="m in insightsSeasonalityMonths()" :key="m.month">
+            <div class="seasonality-bar-col">
+              <div class="seasonality-bar-value tabular" x-text="m.distance_m > 0 ? formatMiles(m.distance_m) : ''"></div>
+              <div class="seasonality-bar" :class="insightsSeasonalityPeakMonth() && m.month === insightsSeasonalityPeakMonth().month && 'peak'"
+                   :style="`height: ${insightsSeasonalityBarHeight(m)}px`"></div>
+              <div class="seasonality-bar-label" x-text="monthName(m.month, true)"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ─── Breakdown ─── -->
+      <div x-show="insights.subtab==='breakdown'">
+        <h2 class="text-base font-semibold mb-2">All-time travel by mode</h2>
+        <div class="rank-bars mb-6">
+          <template x-for="t in insightsBreakdownTravelSorted()" :key="t.mode">
+            <div class="rank-bar-row">
+              <div class="rank-bar-label capitalize" x-text="t.mode"></div>
+              <div class="rank-bar-track">
+                <div class="rank-bar-fill" :style="`width: ${(t.distance_m / insightsBreakdownTravelMax() * 100).toFixed(1)}%; background: var(--wp-mode-${t.mode})`"></div>
+              </div>
+              <div class="rank-bar-value tabular" x-text="formatMiles(t.distance_m)"></div>
+            </div>
+          </template>
+          <template x-if="!insightsBreakdownTravelSorted().length">
+            <div class="empty-state">No travel recorded yet.</div>
+          </template>
+        </div>
+
+        <h2 class="text-base font-semibold mb-2">All-time visits by category</h2>
+        <div class="rank-bars mb-6">
+          <template x-for="v in insightsBreakdownVisitsSorted()" :key="v.category">
+            <div class="rank-bar-row" style="cursor: pointer" @click="switchTab('places'); openCategory(v.category)">
+              <div class="rank-bar-label" x-text="v.category"></div>
+              <div class="rank-bar-track">
+                <div class="rank-bar-fill" :style="`width: ${(v.duration_s / insightsBreakdownVisitsMax() * 100).toFixed(1)}%; background: ${categoryColorVar(v.category)}`"></div>
+              </div>
+              <div class="rank-bar-value tabular" x-text="formatDuration(v.duration_s)"></div>
+            </div>
+          </template>
+        </div>
+
+        <div class="flex items-center justify-between mb-4">
+          <button class="btn-icon" @click="changeMonth(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+          <div class="text-lg font-semibold display" x-text="monthLabel()"></div>
+          <button class="btn-icon" @click="changeMonth(1)"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+        </div>
+
+        <template x-if="insights.data">
+          <div>
+            <h2 class="text-base font-semibold mb-2">Travel this month</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+              <template x-for="(t, mode) in insights.data.travel" :key="mode">
+                <div class="stat-tile insights-tile">
+                  <div class="flex items-center gap-3 mb-2">
+                    <div class="insights-tile-icon" :style="`background: var(--wp-mode-${mode})`">
+                      <i :data-lucide="modeIcon(mode)" class="w-4 h-4" style="color: #fff"></i>
+                    </div>
+                    <div class="flex-1">
+                      <div class="label capitalize" x-text="mode"></div>
+                      <div class="flex items-baseline gap-2">
+                        <div class="value" x-text="formatMiles(t.distance_m)"></div>
+                        <span class="insights-delta" x-show="trendDelta(t.trend) !== null" :class="trendDelta(t.trend) > 0 ? 'up' : (trendDelta(t.trend) < 0 ? 'down' : '')"
+                              x-text="trendDelta(t.trend) !== null ? (trendDelta(t.trend) > 0 ? '+' : '') + trendDelta(t.trend) + '%' : ''"></span>
+                      </div>
+                      <div class="detail" x-text="formatDuration(t.duration_s)"></div>
+                    </div>
+                  </div>
+                  <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="insights-sparkline">
+                    <path :d="sparklinePath(t.trend, 'area')" :style="`fill: var(--wp-mode-${mode}); opacity: 0.18`"></path>
+                    <path :d="sparklinePath(t.trend, 'line')" :style="`fill: none; stroke: var(--wp-mode-${mode}); stroke-width: 2`"></path>
+                  </svg>
+                </div>
+              </template>
+              <template x-if="!Object.keys(insights.data.travel).length">
+                <div class="empty-state">No travel recorded this month.</div>
+              </template>
+            </div>
+
+            <h2 class="text-base font-semibold mb-2">Visits this month</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <template x-for="(v, category) in insights.data.visits" :key="category">
+                <div class="stat-tile insights-tile" style="cursor: pointer" @click="switchTab('places'); openCategory(category)">
+                  <div class="flex items-center gap-3 mb-2">
+                    <div class="insights-tile-icon" :style="`background: ${categoryColorVar(category)}`">
+                      <span style="font-size: 16px; line-height: 1" x-text="categoryIcon(category)"></span>
+                    </div>
+                    <div class="flex-1">
+                      <div class="label" x-text="category"></div>
+                      <div class="flex items-baseline gap-2">
+                        <div class="value" x-text="formatDuration(v.duration_s)"></div>
+                        <span class="insights-delta" x-show="trendDelta(v.trend) !== null" :class="trendDelta(v.trend) > 0 ? 'up' : (trendDelta(v.trend) < 0 ? 'down' : '')"
+                              x-text="trendDelta(v.trend) !== null ? (trendDelta(v.trend) > 0 ? '+' : '') + trendDelta(v.trend) + '%' : ''"></span>
+                      </div>
+                    </div>
+                  </div>
+                  <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="insights-sparkline">
+                    <path :d="sparklinePath(v.trend, 'area')" :style="`fill: ${categoryColorVar(category)}; opacity: 0.18`"></path>
+                    <path :d="sparklinePath(v.trend, 'line')" :style="`fill: none; stroke: ${categoryColorVar(category)}; stroke-width: 2`"></path>
+                  </svg>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ─── Records ─── -->
+      <div x-show="insights.subtab==='records'">
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <template x-if="insightsHighlights && insightsHighlights.longest_trip">
+            <div class="stat-tile">
+              <div class="label">Longest trip</div>
+              <div class="value" style="font-size: 18px" x-text="insightsHighlights.longest_trip.primary_city || insightsHighlights.longest_trip.primary_country || 'Trip'"></div>
+              <div class="detail" x-text="insightsHighlights.longest_trip.days + ' day' + (insightsHighlights.longest_trip.days === 1 ? '' : 's')"></div>
+            </div>
+          </template>
+          <template x-if="insightsHighlights && insightsHighlights.most_visited_place">
+            <div class="stat-tile">
+              <div class="label">Most-visited place</div>
+              <div class="value" style="font-size: 18px" x-text="insightsHighlights.most_visited_place.name"></div>
+              <div class="detail" x-text="insightsHighlights.most_visited_place.visit_count + ' visits' + (insightsHighlights.most_visited_place.city ? ' · ' + insightsHighlights.most_visited_place.city : '')"></div>
+            </div>
+          </template>
+          <template x-if="insightsHighlights && insightsHighlights.busiest_day">
+            <div class="stat-tile">
+              <div class="label">Busiest day ever</div>
+              <div class="value" style="font-size: 18px" x-text="formatDayString(insightsHighlights.busiest_day.day)"></div>
+              <div class="detail" x-text="insightsHighlights.busiest_day.visit_count + ' visits'"></div>
+            </div>
+          </template>
+          <template x-if="insightsHighlights && insightsHighlights.avg_trip_days">
+            <div class="stat-tile">
+              <div class="label">Average trip length</div>
+              <div class="value tabular" x-text="insightsHighlights.avg_trip_days + ' days'"></div>
+            </div>
+          </template>
+          <template x-if="insightsHighlights && insightsHighlights.longest_gap_days !== null">
+            <div class="stat-tile">
+              <div class="label">Longest gap between trips</div>
+              <div class="value tabular" x-text="insightsHighlights.longest_gap_days + ' days'"></div>
+            </div>
+          </template>
+          <template x-if="insightsHighlights && insightsHighlights.days_since_last_trip !== null">
+            <div class="stat-tile">
+              <div class="label">Since your last trip</div>
+              <div class="value tabular" x-text="insightsHighlights.days_since_last_trip + ' day' + (insightsHighlights.days_since_last_trip === 1 ? '' : 's')"></div>
+            </div>
+          </template>
+        </div>
+      </div>
     </div>
 
     <!-- ═══════════ PLACES ═══════════ -->

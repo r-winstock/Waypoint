@@ -158,7 +158,7 @@ function waypoint() {
 
     day: { date: todayIso(), data: null, loading: false, map: null, overview: null },
     trips: { data: null, loading: false, page: 1, map: null, detail: null, detailLoading: false, detailMap: null },
-    insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false },
+    insights: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, data: null, loading: false, subtab: 'overview' },
     places: { data: null, loading: false, category: null, categoryData: null },
     cities: { data: null, loading: false, page: 1, detail: null, detailLoading: false, detailMap: null },
     world: { data: null, loading: false, map: null, detail: null, detailLoading: false, detailMap: null },
@@ -354,6 +354,18 @@ function waypoint() {
         if (tab === 'world' && this.world.detailMap) this.world.detailMap.invalidateSize();
         if (tab === 'cities' && this.cities.detailMap) this.cities.detailMap.invalidateSize();
       });
+    },
+
+    // Overview and Records both only need insightsHighlights (already loaded
+    // eagerly on tab entry, same as before this subtab split existed) -
+    // Trends and Breakdown each need their own all-time endpoint, lazy-
+    // loaded the first time that subtab is actually opened rather than on
+    // every Insights visit regardless of which subtab is shown.
+    switchInsightsSubtab(subtab) {
+      this.insights.subtab = subtab;
+      if (subtab === 'trends' && !this.insightsYearly) this.loadInsightsYearly();
+      if (subtab === 'trends' && !this.insightsSeasonality) this.loadInsightsSeasonality();
+      if (subtab === 'breakdown' && !this.insightsBreakdown) this.loadInsightsBreakdown();
     },
 
     // ─── Day ───
@@ -640,6 +652,165 @@ function waypoint() {
     formatDayString(dayStr) {
       const [y, m, d] = dayStr.split('-').map(Number);
       return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    },
+    // Earth's mean circumference, 40,075 km - a fun/narrative comparison for
+    // the Overview subtab's total-distance stat, computed client-side since
+    // it's a pure display transform of a value the backend already returns.
+    earthCircumferences() {
+      if (!this.insightsHighlights) return null;
+      return (this.insightsHighlights.total_distance_m / 40075000).toFixed(1);
+    },
+    // stroke-dasharray on the gauge's semicircle path is fixed at 282.74
+    // (pi * 90, the path's own radius - see the <path> in index.html) -
+    // this is the matching stroke-dashoffset for a given percentage.
+    lifeGaugeOffset(percent) {
+      const frac = Math.min(1, Math.max(0, (percent || 0) / 100));
+      return (282.74 * (1 - frac)).toFixed(2);
+    },
+    // This app has no Settings UI at all yet (home_lat/lon are equally
+    // curl-only, per DEPLOY.md) - shown directly in the empty state rather
+    // than silently omitting the life-percent stat with no way to discover
+    // how to enable it.
+    birthDateCurlCommand() {
+      return `curl -X PUT ${location.origin}/api/settings -H "Content-Type: application/json" -d '{"birth_date": "YYYY-MM-DD"}'`;
+    },
+
+    // ─── Insights: year-over-year trend (Trends subtab) ───
+    // Mirrors the Day view's own history chart (chartX/Y/AreaPath/LinePath
+    // etc.) as closely as possible for visual/behavioural consistency, just
+    // sourced from /api/insights/yearly (one point per year) instead of
+    // /api/day/overview (one point per month) - no click-to-navigate here,
+    // since there's no equivalent "jump to this year" action for Insights
+    // the way the Day view jumps to a clicked month.
+    insightsYearly: null,
+    insightsYearlyHover: null,
+    async loadInsightsYearly() {
+      try {
+        const res = await fetch('/api/insights/yearly');
+        this.insightsYearly = await res.json();
+      } catch (e) { console.error('Failed to load yearly insights', e); }
+    },
+    insightsYearlyYears() {
+      return (this.insightsYearly && this.insightsYearly.years) || [];
+    },
+    insightsYearlyMax() {
+      return Math.max(1, ...this.insightsYearlyYears().map((y) => y.distance_m));
+    },
+    insightsYearlyX(index) {
+      const n = this.insightsYearlyYears().length;
+      return n > 1 ? (index / (n - 1)) * 1000 : 500;
+    },
+    insightsYearlyY(distanceM) {
+      return 180 - (distanceM / this.insightsYearlyMax()) * 160;
+    },
+    insightsYearlyAreaPath() {
+      const years = this.insightsYearlyYears();
+      if (!years.length) return '';
+      const top = years.map((y, i) => `${this.insightsYearlyX(i).toFixed(1)},${this.insightsYearlyY(y.distance_m).toFixed(1)}`).join(' L ');
+      return `M ${this.insightsYearlyX(0).toFixed(1)},180 L ${top} L ${this.insightsYearlyX(years.length - 1).toFixed(1)},180 Z`;
+    },
+    insightsYearlyLinePath() {
+      return this.insightsYearlyYears()
+        .map((y, i) => `${i === 0 ? 'M' : 'L'} ${this.insightsYearlyX(i).toFixed(1)},${this.insightsYearlyY(y.distance_m).toFixed(1)}`)
+        .join(' ');
+    },
+    insightsYearlyPeak() {
+      const years = this.insightsYearlyYears();
+      if (!years.length) return null;
+      return years.reduce((a, b) => (b.distance_m > a.distance_m ? b : a), years[0]);
+    },
+    insightsYearlyPeakPoint() {
+      const years = this.insightsYearlyYears();
+      const peak = this.insightsYearlyPeak();
+      if (!peak || !peak.distance_m) return null;
+      const idx = years.indexOf(peak);
+      return { x: this.insightsYearlyX(idx), y: this.insightsYearlyY(peak.distance_m), year: peak };
+    },
+    insightsYearlyTicks() {
+      const years = this.insightsYearlyYears();
+      const ticks = years.map((y, i) => ({ x: this.insightsYearlyX(i), label: String(y.year) }));
+      if (ticks.length > 14) {
+        const step = Math.ceil(ticks.length / 10);
+        return ticks.filter((_, i) => i % step === 0);
+      }
+      return ticks;
+    },
+    insightsYearlyPointerMove(evt) {
+      const years = this.insightsYearlyYears();
+      if (!years.length) return;
+      const rect = evt.currentTarget.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
+      const idx = Math.round(frac * (years.length - 1));
+      this.insightsYearlyHover = { x: this.insightsYearlyX(idx), year: years[idx] };
+    },
+    insightsYearlyPointerLeave() {
+      this.insightsYearlyHover = null;
+    },
+
+    // ─── Insights: seasonality (Trends subtab) ───
+    // "Which calendar month do you travel most", aggregated across every
+    // year of history - an emphasis-form bar chart (the peak month in
+    // accent colour, the rest muted) rather than a categorical palette,
+    // since there's exactly one point to this chart: which month stands out.
+    insightsSeasonality: null,
+    async loadInsightsSeasonality() {
+      try {
+        const res = await fetch('/api/insights/seasonality');
+        this.insightsSeasonality = await res.json();
+      } catch (e) { console.error('Failed to load seasonality insights', e); }
+    },
+    insightsSeasonalityMonths() {
+      return (this.insightsSeasonality && this.insightsSeasonality.months) || [];
+    },
+    insightsSeasonalityMax() {
+      return Math.max(1, ...this.insightsSeasonalityMonths().map((m) => m.distance_m));
+    },
+    insightsSeasonalityPeakMonth() {
+      const months = this.insightsSeasonalityMonths();
+      if (!months.length) return null;
+      const peak = months.reduce((a, b) => (b.distance_m > a.distance_m ? b : a), months[0]);
+      return peak.distance_m > 0 ? peak : null;
+    },
+    insightsSeasonalityBarHeight(m) {
+      return Math.max(2, (m.distance_m / this.insightsSeasonalityMax()) * 120);
+    },
+    monthName(monthNum, short) {
+      const d = new Date(2000, monthNum - 1, 1);
+      return d.toLocaleDateString('en-GB', { month: short ? 'short' : 'long' });
+    },
+
+    // ─── Insights: all-time breakdown (Breakdown subtab) ───
+    // Same underlying totals the month-scoped tiles below already show,
+    // just summed across the whole of history instead of one month - a
+    // ranked horizontal bar list, not a donut: Waypoint's own category
+    // taxonomy runs to ~18 categories, and a many-slice pie/donut is a
+    // known-bad form for that count (see the dataviz skill's own series-
+    // count ladder) - a sorted bar list stays readable regardless of how
+    // many categories actually have data.
+    insightsBreakdown: null,
+    async loadInsightsBreakdown() {
+      try {
+        const res = await fetch('/api/insights/breakdown');
+        this.insightsBreakdown = await res.json();
+      } catch (e) { console.error('Failed to load insights breakdown', e); }
+    },
+    insightsBreakdownTravelSorted() {
+      const travel = (this.insightsBreakdown && this.insightsBreakdown.travel) || {};
+      return Object.entries(travel)
+        .map(([mode, t]) => ({ mode, ...t }))
+        .sort((a, b) => b.distance_m - a.distance_m);
+    },
+    insightsBreakdownVisitsSorted() {
+      const visits = (this.insightsBreakdown && this.insightsBreakdown.visits) || {};
+      return Object.entries(visits)
+        .map(([category, v]) => ({ category, ...v }))
+        .sort((a, b) => b.duration_s - a.duration_s);
+    },
+    insightsBreakdownTravelMax() {
+      return Math.max(1, ...this.insightsBreakdownTravelSorted().map((t) => t.distance_m));
+    },
+    insightsBreakdownVisitsMax() {
+      return Math.max(1, ...this.insightsBreakdownVisitsSorted().map((v) => v.duration_s));
     },
 
     heatmapYear: new Date().getFullYear(),

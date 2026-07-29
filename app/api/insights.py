@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.db import db_dependency
+from app.db import db_dependency, get_setting
 from app.models import Place, Trip, TripSegment, Visit
 
 router = APIRouter()
@@ -87,6 +87,33 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     )
     total_cities = session.query(func.count(func.distinct(Place.city))).filter(Place.city.isnot(None)).scalar() or 0
 
+    # Trip.start_ts/end_ts already define "away from home" stretches (see
+    # Trip's own model docstring), so summing their spans directly is the
+    # honest measure of "days spent travelling" - no need to re-derive it
+    # from Visit rows. +86399 (not +86400) before the day-floor division:
+    # a trip's own end_ts is a real moment mid-day, not a midnight boundary,
+    # so this rounds a 36-hour trip to 2 days rather than 1 or 3.
+    trip_rows = session.query(Trip.start_ts, Trip.end_ts).order_by(Trip.start_ts).all()
+    total_trip_days = sum((end - start + 86399) // 86400 for start, end in trip_rows)
+    avg_trip_days = round(total_trip_days / len(trip_rows), 1) if trip_rows else None
+    longest_gap_days = (
+        max((b_start - a_end) // 86400 for (_, a_end), (b_start, _) in zip(trip_rows, trip_rows[1:]))
+        if len(trip_rows) > 1
+        else None
+    )
+    days_since_last_trip = (int(datetime.now(timezone.utc).timestamp()) - trip_rows[-1][1]) // 86400 if trip_rows else None
+
+    birth_date_str = get_setting(session, "birth_date", "")
+    life_percent = None
+    if birth_date_str:
+        try:
+            birth_ts = int(datetime.strptime(birth_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+            days_alive = (int(datetime.now(timezone.utc).timestamp()) - birth_ts) / 86400
+            if days_alive > 0:
+                life_percent = round(total_trip_days / days_alive * 100, 2)
+        except ValueError:
+            pass  # malformed birth_date - degrades to no stat, same as unset
+
     day_expr = func.strftime("%Y-%m-%d", Visit.start_ts, "unixepoch")
     busiest_day_row = (
         session.query(day_expr.label("day"), func.count(Visit.id).label("cnt"))
@@ -115,6 +142,11 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         "total_distance_m": total_distance_m,
         "total_countries": total_countries,
         "total_cities": total_cities,
+        "total_trip_days": total_trip_days,
+        "avg_trip_days": avg_trip_days,
+        "longest_gap_days": longest_gap_days,
+        "days_since_last_trip": days_since_last_trip,
+        "life_percent": life_percent,
         "busiest_day": (
             {"day": busiest_day_row.day, "visit_count": busiest_day_row.cnt} if busiest_day_row else None
         ),
@@ -134,6 +166,79 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
             if most_visited_row
             else None
         ),
+    }
+
+
+@router.get("/api/insights/yearly")
+def get_insights_yearly(session: Session = Depends(db_dependency)):
+    """Per-calendar-year distance/visit totals across all recorded history -
+    the Trends subtab's year-over-year chart. Zero-filled between the first
+    and last year with any data, same reasoning as the Day view's own
+    monthly density chart: an evenly-spaced timeline needs explicit zeros,
+    not gaps silently skipped."""
+    year_expr = func.strftime("%Y", TripSegment.start_ts, "unixepoch")
+    distance_rows = dict(
+        session.query(year_expr.label("year"), func.sum(TripSegment.distance_m)).group_by("year").all()
+    )
+    visit_year_expr = func.strftime("%Y", Visit.start_ts, "unixepoch")
+    visit_rows = dict(session.query(visit_year_expr.label("year"), func.count(Visit.id)).group_by("year").all())
+
+    if not distance_rows and not visit_rows:
+        return {"years": []}
+    all_years = {int(y) for y in distance_rows} | {int(y) for y in visit_rows}
+    first_year, last_year = min(all_years), max(all_years)
+
+    return {
+        "years": [
+            {
+                "year": y,
+                "distance_m": distance_rows.get(str(y), 0.0),
+                "visit_count": visit_rows.get(str(y), 0),
+            }
+            for y in range(first_year, last_year + 1)
+        ]
+    }
+
+
+@router.get("/api/insights/seasonality")
+def get_insights_seasonality(session: Session = Depends(db_dependency)):
+    """Per-calendar-month (Jan-Dec) totals aggregated across every year of
+    history - "which month do you actually travel most", as distinct from
+    the yearly chart's "which year". Always 12 entries regardless of how
+    much history exists, since a calendar month is a fixed, complete scale
+    (there's no equivalent of "zero-filling a gap" here - month 1-12 always
+    all exist)."""
+    month_expr = func.strftime("%m", TripSegment.start_ts, "unixepoch")
+    distance_rows = dict(
+        session.query(month_expr.label("month"), func.sum(TripSegment.distance_m)).group_by("month").all()
+    )
+    visit_month_expr = func.strftime("%m", Visit.start_ts, "unixepoch")
+    visit_rows = dict(session.query(visit_month_expr.label("month"), func.count(Visit.id)).group_by("month").all())
+
+    return {
+        "months": [
+            {
+                "month": m,
+                "distance_m": distance_rows.get(f"{m:02d}", 0.0),
+                "visit_count": visit_rows.get(f"{m:02d}", 0),
+            }
+            for m in range(1, 13)
+        ]
+    }
+
+
+@router.get("/api/insights/breakdown")
+def get_insights_breakdown(session: Session = Depends(db_dependency)):
+    """All-time (not month-scoped) travel-by-mode and visits-by-category
+    totals, for Breakdown's ranked bar lists - reuses the exact same
+    aggregation helpers the month view already uses, just called across the
+    whole of history (start_ts=0) instead of one month's bounds."""
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    travel = _travel_totals(session, 0, now_ts)
+    visits = _visit_totals(session, 0, now_ts)
+    return {
+        "travel": {mode: {"distance_m": t["distance_m"], "duration_s": t["duration_s"]} for mode, t in travel.items()},
+        "visits": {category: {"duration_s": duration_s} for category, duration_s in visits.items()},
     }
 
 
