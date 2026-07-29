@@ -4,7 +4,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.orm import Session
 
 from app.db import get_setting
@@ -261,6 +261,19 @@ def _rebuild_trips(session: Session) -> None:
     # boundaries directly from the source file's own folder structure (see
     # scripts/import_travellerspoint_kml.py) and are never rebuilt here.
     session.execute(delete(Trip).where(Trip.source == "computed"))
+
+    # A visit that doesn't end up part of a new qualifying trip in this pass
+    # (now classified as "at home" under updated settings, or its away-run
+    # too short to clear TRIP_MIN_DURATION_S - see _flush_trip_run, which
+    # only ever sets trip_id on visits it actually assigns to a new Trip)
+    # must not keep whatever trip_id it had from a previous rebuild. SQLite
+    # reuses a deleted row's rowid for the next inserted row, so a stale FK
+    # left behind here can silently alias onto an entirely unrelated
+    # freshly-created trip - confirmed live: a real 14-day Manchester trip
+    # absorbed several unrelated one-off Bedford errands from three weeks
+    # later this way, because their stale trip_id happened to match
+    # Manchester's newly (re)assigned id.
+    session.execute(update(Visit).where(Visit.source != "kml_import").values(trip_id=None))
 
     home_lat = get_setting(session, "home_lat", "")
     home_lon = get_setting(session, "home_lon", "")

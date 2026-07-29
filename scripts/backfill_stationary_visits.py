@@ -57,10 +57,16 @@ from app.geocoding import resolve_place  # noqa: E402
 from app.models import Visit  # noqa: E402
 from app.processing import _rebuild_trips, haversine_m  # noqa: E402
 
-# Same order of magnitude as the OwnTracks stay-point radius (~150m) used
-# elsewhere in this app - generous enough to absorb normal GPS jitter around
-# a single building without swallowing a genuine short local trip.
-STATIONARY_RADIUS_M = 200.0
+# Widened from an initial 200m after a confirmed real miss: a genuine
+# evening at home came back with a 324m spread (sparse points, more GPS
+# jitter than a tight 200m cutoff allowed), while nearby non-stationary
+# segments that same day measured 1.9km/2.7km - genuinely local movement,
+# correctly still excluded. The full distribution has no sharp cliff
+# (200m: 44% of segments, 400m: 57%, 1000m: 61%), so there's no single
+# "correct" value - 400m is chosen to comfortably clear the confirmed real
+# case with some margin, well short of where real short errands start
+# (a drive to even a nearby shop typically covers much more than this).
+STATIONARY_RADIUS_M = 400.0
 COMMIT_EVERY = 200
 
 
@@ -86,7 +92,12 @@ def find_candidates(json_path: Path) -> list[tuple[int, int, float, float]]:
     with open(json_path, "rb") as f:
         for seg in ijson.items(f, "semanticSegments.item"):
             points = seg.get("timelinePath")
-            if not points or len(points) < 2:
+            # A single-point timelinePath is trivially "stationary" (spread=0,
+            # nothing to compare it against) - previously required >=2 points
+            # to compute a spread at all, which silently discarded 798 real
+            # segments across the export, several of them genuine at-home
+            # stays with only one GPS fix logged for the whole window.
+            if not points:
                 continue
             lat, lon, spread = stationary_centroid(points)
             if spread >= STATIONARY_RADIUS_M:
