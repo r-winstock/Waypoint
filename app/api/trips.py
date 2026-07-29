@@ -53,6 +53,15 @@ def get_trips(page: int = 1, page_size: int = 24, session: Session = Depends(db_
         # is stable regardless of which raw string a given trip happened to
         # be geocoded with.
         key = (t.name, t.primary_city, t.primary_country_code)
+        # A trip that resolved no name/city/country at all is unknown, not
+        # "the same unknown place" as some other unrelated trip that also
+        # failed to resolve - confirmed live, three genuinely separate trips
+        # (Feb 2019 near Rugby, Aug 2019 near Oxford, Aug 2021 near
+        # Northampton) silently merged into one incoherent "Trip" card
+        # because they shared the same (None, None, None) key. Falling back
+        # to the trip's own id keeps every such trip in its own card instead.
+        if key == (None, None, None):
+            key = ("_unresolved", t.id, None)
         if key not in groups:
             groups[key] = {
                 "name": t.name,

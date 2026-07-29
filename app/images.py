@@ -94,7 +94,7 @@ def _plausible_match(query: str, title: str) -> bool:
     return bool(query_words & title_words)
 
 
-def _wikipedia_search_titles(query: str, limit: int = 6) -> list[str]:
+def _wikipedia_search_titles(query: str, limit: int = 6) -> list[str] | None:
     """Up to `limit` plausible candidate titles, in Wikipedia's own relevance
     order - not just the top hit. Searched as intitle:{query} rather than a
     bare full-text search - confirmed live that a bare search for a common
@@ -102,7 +102,18 @@ def _wikipedia_search_titles(query: str, limit: int = 6) -> list[str]:
     (e.g. "House of Windsor") above the real settlement article, whereas
     intitle: (restricted to titles that actually contain the query word)
     consistently surfaces the real "Place, Region" variants near the top
-    (e.g. "Windsor, Berkshire", "Split, Croatia")."""
+    (e.g. "Windsor, Berkshire", "Split, Croatia").
+
+    Returns None (not []) on a request failure - confirmed live that a
+    handful of real, perfectly findable places (Minehead among them, a
+    well-known Somerset seaside town) got permanently cached as "no image
+    found" this way: several trip cards loading their photos at once hit a
+    transient Wikipedia error, and the caller (get_or_fetch_image) had no
+    way to tell "the request itself failed" apart from "genuinely no
+    results" since both looked like an empty list. None lets it apply the
+    same "don't poison the cache over a transient failure" handling already
+    used for a failed image download just below - only a real empty result
+    list means no plausible title exists."""
     _throttle()
     try:
         resp = httpx.get(
@@ -118,7 +129,7 @@ def _wikipedia_search_titles(query: str, limit: int = 6) -> list[str]:
         results = resp.json().get("query", {}).get("search", [])
         return [r["title"] for r in results if _plausible_match(query, r["title"])]
     except (httpx.HTTPError, ValueError, KeyError, IndexError):
-        return []
+        return None
 
 
 @dataclass
@@ -226,6 +237,15 @@ def get_or_fetch_image(
         return cached
 
     titles = _wikipedia_search_titles(query)
+    if titles is None:
+        # The search request itself failed (network hiccup, transient
+        # Wikipedia error) - not the same as a successful search turning up
+        # nothing. Same handling as a failed image download just below:
+        # return an unsaved result so the next request retries from scratch
+        # rather than permanently caching a transient failure as "no image".
+        if cached is not None:
+            return cached
+        return CachedImage(key=key, query=query, found=False, fetched_at=int(time.time()))
 
     fallback_page: WikiPage | None = None
     hint_confirmed_page: WikiPage | None = None

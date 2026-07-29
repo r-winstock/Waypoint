@@ -549,7 +549,11 @@ function waypoint() {
       try {
         const res = await fetch(`/api/trips?page=${this.trips.page}`);
         this.trips.data = await res.json();
-        this.$nextTick(() => this.renderTripsMap());
+        // The map pins load separately (once, not on every page change) and
+        // cover every destination regardless of which card-page is showing
+        // - see loadTripsMapData()'s own comment for why.
+        if (!this.trips.allDestinations) this.loadTripsMapData();
+        else this.$nextTick(() => this.renderTripsMap());
       } catch (e) { console.error('Failed to load trips', e); }
       finally { this.trips.loading = false; }
     },
@@ -559,16 +563,57 @@ function waypoint() {
       this.trips.page = next;
       this.loadTrips();
     },
-    // Overview map shows pins for the current page's destinations only, not
-    // all 800 trips at once - that many markers was unwieldy anyway, and
-    // the World tab already covers the "whole history at a glance" view.
+    // Previously the overview map only pinned the current card-page's
+    // destinations, one pin per *visit* - reasoned as avoiding clutter from
+    // ~800 individual trips' worth of visits at once. That silently hid
+    // real history (a Dallas/Canada/Dominican Republic-era destination
+    // simply never appeared unless its card-page happened to be open) and
+    // wasn't actually the fix for the real problem, which was pin *count*,
+    // not page scope: one pin per destination (not per visit, not per
+    // trip) keeps the map to the same size as the number of destination
+    // cards that exist in total (a few dozen for a real personal history),
+    // regardless of pagination. Fetched once with a large page_size rather
+    // than a dedicated endpoint - already proven fast (<1s) at this
+    // personal-history scale, and every destination's own trips/visits data
+    // is already shaped exactly right to reuse directly.
+    async loadTripsMapData() {
+      try {
+        const res = await fetch('/api/trips?page=1&page_size=9999');
+        const data = await res.json();
+        this.trips.allDestinations = data.destinations;
+        this.$nextTick(() => this.renderTripsMap());
+      } catch (e) { console.error('Failed to load trips map data', e); }
+    },
+    // A destination's own first visit is its own trip's departure point, not
+    // the destination - confirmed live: every KML-imported trip's visit list
+    // starts at the near-home transit stop (e.g. "Daventry"), so naively
+    // using visits[0] plotted "USA"/"Canada"/"Los Angeles" destination pins
+    // at UK coordinates. Picking whichever visit sits farthest from that
+    // first one mirrors the same "farthest from origin" logic already used
+    // server-side (see _farthest_city_country/_primary_city_country) and
+    // correctly lands on the real destination instead.
+    tripDestinationPin(d) {
+      const visits = d.trips.flatMap((t) => t.visits);
+      if (!visits.length) return null;
+      const origin = visits[0];
+      let best = origin;
+      let bestDist = -1;
+      for (const v of visits) {
+        const dist = wpHaversineM([origin.lat, origin.lon], [v.lat, v.lon]);
+        if (dist > bestDist) { bestDist = dist; best = v; }
+      }
+      return best;
+    },
     renderTripsMap() {
+      if (!this.trips.allDestinations) return;
       if (!this.trips.map) this.trips.map = wpInitMap('trips-map-container');
-      const pins = this.trips.data.destinations.flatMap((d) =>
-        d.trips.flatMap((t) =>
-          t.visits.map((v) => ({ lat: v.lat, lon: v.lon, category: v.category, label: `<b>${v.place_name || d.name || d.primary_city || 'Visit'}</b>` }))
-        )
-      );
+      const pins = this.trips.allDestinations
+        .map((d) => {
+          const pin = this.tripDestinationPin(d);
+          if (!pin) return null;
+          return { lat: pin.lat, lon: pin.lon, category: pin.category, label: `<b>${d.name || d.primary_city || d.primary_country || 'Trip'}</b>` };
+        })
+        .filter(Boolean);
       wpRenderPins(this.trips.map, pins);
     },
     async openTrip(tripId) {
