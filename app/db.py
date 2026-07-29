@@ -44,6 +44,9 @@ _COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     "location_points": {
         "source": "VARCHAR(16) NOT NULL DEFAULT 'owntracks'",
     },
+    "trips": {
+        "name": "VARCHAR(255)",
+    },
 }
 
 

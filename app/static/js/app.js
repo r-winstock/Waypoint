@@ -566,7 +566,7 @@ function waypoint() {
       if (!this.trips.map) this.trips.map = wpInitMap('trips-map-container');
       const pins = this.trips.data.destinations.flatMap((d) =>
         d.trips.flatMap((t) =>
-          t.visits.map((v) => ({ lat: v.lat, lon: v.lon, category: v.category, label: `<b>${v.place_name || d.primary_city || 'Visit'}</b>` }))
+          t.visits.map((v) => ({ lat: v.lat, lon: v.lon, category: v.category, label: `<b>${v.place_name || d.name || d.primary_city || 'Visit'}</b>` }))
         )
       );
       wpRenderPins(this.trips.map, pins);
@@ -969,7 +969,7 @@ function waypoint() {
         case 'most_visited':
           return `Nowhere beats ${story.name}${story.city ? ' in ' + story.city : ''}. You've been back ${story.visit_count} times.`;
         case 'longest_trip':
-          return `Your longest trip yet: ${story.days} day${story.days === 1 ? '' : 's'} in ${story.primary_city || story.primary_country || 'one place'}.`;
+          return `Your longest trip yet: ${story.days} day${story.days === 1 ? '' : 's'} in ${story.name || story.primary_city || story.primary_country || 'one place'}.`;
         case 'busiest_day':
           return `Your busiest day ever was ${this.formatDayString(story.day)}, with ${story.visit_count} separate visits packed in.`;
         case 'peak_year':

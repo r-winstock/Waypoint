@@ -28,14 +28,22 @@ def get_trips(page: int = 1, page_size: int = 24, session: Session = Depends(db_
     trips = session.query(Trip).order_by(Trip.start_ts.desc()).all()
 
     total_days = 0
-    groups: dict[tuple[str | None, str | None], dict] = {}
-    order: list[tuple[str | None, str | None]] = []
+    groups: dict[tuple[str | None, str | None, str | None], dict] = {}
+    order: list[tuple[str | None, str | None, str | None]] = []
     for t in trips:
         days = max(1, (t.end_ts - t.start_ts) // 86400 + 1)
         total_days += days
-        key = (t.primary_city, t.primary_country)
+        # Named (kml_import) trips group by their own name first - without
+        # this, two distinct named trips that happen to share a
+        # primary_city/primary_country (a geometric best-guess, not always
+        # the same place two different trips actually centred on) would
+        # wrongly merge into one destination card. Unnamed (computed) trips
+        # are unaffected - name is always None for them, so the key reduces
+        # to exactly the grouping already in place before Trip.name existed.
+        key = (t.name, t.primary_city, t.primary_country)
         if key not in groups:
             groups[key] = {
+                "name": t.name,
                 "primary_city": t.primary_city,
                 # English, not the raw stored (sometimes local-language)
                 # value - used as the photo-search hint on Trip cards, and
@@ -59,6 +67,7 @@ def get_trips(page: int = 1, page_size: int = 24, session: Session = Depends(db_
         group["trips"].append(
             {
                 "id": t.id,
+                "name": t.name,
                 "start_ts": t.start_ts,
                 "end_ts": t.end_ts,
                 "days": days,
@@ -146,6 +155,7 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
 
     return {
         "id": trip.id,
+        "name": trip.name,
         "start_ts": trip.start_ts,
         "end_ts": trip.end_ts,
         "days": max(1, (trip.end_ts - trip.start_ts) // 86400 + 1),

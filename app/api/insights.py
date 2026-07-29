@@ -134,7 +134,7 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     )
 
     longest_trip_row = (
-        session.query(Trip.id, Trip.primary_city, Trip.primary_country, Trip.start_ts, Trip.end_ts)
+        session.query(Trip.id, Trip.name, Trip.primary_city, Trip.primary_country, Trip.start_ts, Trip.end_ts)
         .order_by((Trip.end_ts - Trip.start_ts).desc())
         .first()
     )
@@ -186,7 +186,7 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     )
 
     first_trip_row = (
-        session.query(Trip.id, Trip.primary_city, Trip.primary_country, Trip.start_ts)
+        session.query(Trip.id, Trip.name, Trip.primary_city, Trip.primary_country, Trip.start_ts)
         .order_by(Trip.start_ts.asc())
         .first()
     )
@@ -313,6 +313,7 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         "longest_trip": (
             {
                 "trip_id": longest_trip_row.id,
+                "name": longest_trip_row.name,
                 "primary_city": longest_trip_row.primary_city,
                 "primary_country": longest_trip_row.primary_country,
                 "start_ts": longest_trip_row.start_ts,
@@ -353,6 +354,7 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         "first_trip": (
             {
                 "trip_id": first_trip_row.id,
+                "name": first_trip_row.name,
                 "primary_city": first_trip_row.primary_city,
                 "primary_country": first_trip_row.primary_country,
                 "day": datetime.fromtimestamp(first_trip_row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),

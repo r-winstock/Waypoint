@@ -120,6 +120,18 @@ class Trip(Base):
     primary_city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     primary_country: Mapped[str | None] = mapped_column(String(128), nullable=True)
     primary_country_code: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # Human-given trip name (e.g. "New Zealand 2004"), sourced from a
+    # Travellerspoint KML export's own folder name - only ever set for
+    # source="kml_import" trips (see scripts/import_travellerspoint_kml.py).
+    # Preferred as the display label over primary_city/primary_country when
+    # present: those are a geometric best-guess at the "real" destination
+    # among a trip's waypoints, which turned out unreliable in practice (a
+    # connecting airport can measure marginally farther from home than the
+    # actual destination) - a name the trip's own creator chose doesn't have
+    # that failure mode. Still kept alongside primary_city/primary_country
+    # rather than replacing them, since a country/city pair remains a much
+    # better Wikipedia search term for card photos than "New Zealand 2004".
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # "computed" (the gap/radius heuristic in _rebuild_trips, rebuilt every
     # time it runs) or "kml_import" (trip boundaries taken directly from the
     # source file's own folder structure, which is more reliable than any

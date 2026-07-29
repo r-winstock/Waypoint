@@ -326,7 +326,7 @@
                 <div class="empty-state">No trips detected yet — set a home location in Settings so Waypoint can tell when you're away.</div>
               </template>
               <div class="grid-cards">
-                <template x-for="d in trips.data.destinations" :key="(d.primary_city || '') + '|' + (d.primary_country || '')">
+                <template x-for="d in trips.data.destinations" :key="(d.name || '') + '|' + (d.primary_city || '') + '|' + (d.primary_country || '')">
                   <div class="trip-card" x-data="{imgFailed: false, expanded: false}"
                        @click="d.trip_count > 1 ? (expanded = !expanded) : openTrip(d.trips[0].id)">
                     <div class="banner" :class="!imgFailed && (d.primary_city || d.primary_country) && 'has-photo'">
@@ -342,7 +342,7 @@
                         <span class="missing-label" x-show="imgFailed">Load photo</span>
                       </div>
                       <span class="count-badge" x-show="d.trip_count > 1" x-text="d.trip_count + ' visits'"></span>
-                      <div class="title" x-text="d.primary_city || d.primary_country || 'Trip'"></div>
+                      <div class="title" x-text="d.name || d.primary_city || d.primary_country || 'Trip'"></div>
                     </div>
                     <div class="body">
                       <template x-if="d.trip_count === 1">
@@ -392,7 +392,7 @@
       <template x-if="trips.detail">
         <div>
           <button class="nav-tab mb-3" @click="history.back()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to trips</button>
-          <div class="text-lg font-semibold display mb-1" x-text="trips.detail.primary_city || trips.detail.primary_country || 'Trip'"></div>
+          <div class="text-lg font-semibold display mb-1" x-text="trips.detail.name || trips.detail.primary_city || trips.detail.primary_country || 'Trip'"></div>
           <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="formatDateRange(trips.detail.start_ts, trips.detail.end_ts) + ' · ' + trips.detail.days + ' day' + (trips.detail.days > 1 ? 's' : '')"></div>
 
           <template x-if="trips.detail.photos && trips.detail.photos.length">
@@ -752,7 +752,7 @@
                     <div class="record-icon" style="background: var(--wp-cat-culture)"><span>🧳</span></div>
                     <div class="label">Longest trip</div>
                   </div>
-                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.longest_trip.primary_city || insightsHighlights.longest_trip.primary_country || 'Trip'"></div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.longest_trip.name || insightsHighlights.longest_trip.primary_city || insightsHighlights.longest_trip.primary_country || 'Trip'"></div>
                   <div class="detail" x-text="insightsHighlights.longest_trip.days + ' day' + (insightsHighlights.longest_trip.days === 1 ? '' : 's')"></div>
                 </div>
               </template>
@@ -799,7 +799,7 @@
                     <div class="record-icon" style="background: var(--wp-cat-parks)"><span>🌱</span></div>
                     <div class="label">First trip on record</div>
                   </div>
-                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.first_trip.primary_city || insightsHighlights.first_trip.primary_country || 'Trip'"></div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.first_trip.name || insightsHighlights.first_trip.primary_city || insightsHighlights.first_trip.primary_country || 'Trip'"></div>
                   <div class="detail" x-text="Math.round(insightsHighlights.first_trip.years_ago) + ' year' + (Math.round(insightsHighlights.first_trip.years_ago) === 1 ? '' : 's') + ' ago · ' + formatDayString(insightsHighlights.first_trip.day)"></div>
                 </div>
               </template>

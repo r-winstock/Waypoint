@@ -100,6 +100,19 @@ def parse_folder(folder: ET.Element) -> tuple[str, list[tuple[str, float, float,
     return trip_name, waypoints
 
 
+TRAILING_YEAR_RE = re.compile(r"\s*\d{4}\s*$")
+
+
+def clean_trip_name(raw_name: str) -> str | None:
+    """Strips a trailing year (Travellerspoint's own folder names are
+    consistently "{Place} {Year}", e.g. "New Zealand 2004") - the trip's own
+    date range is already shown elsewhere in the UI, so repeating the year
+    in the headline label is redundant. Returns None for an empty/unnamed
+    folder rather than storing an empty string."""
+    cleaned = TRAILING_YEAR_RE.sub("", raw_name).strip()
+    return cleaned or None
+
+
 def infer_mode(name_a: str, name_b: str, distance_km: float) -> str:
     if AIRPORT_RE.search(name_a) or AIRPORT_RE.search(name_b) or distance_km > FLYING_DISTANCE_KM:
         return "flying"
@@ -114,7 +127,18 @@ def _farthest_city_country(visits: list[Visit]) -> tuple[str | None, str | None,
     structurally an out-and-back list - the near-home departure/transit point
     (e.g. "Daventry") appears on both the outbound and return leg, so it ties
     or beats the real destination under a count/duration-based pick. The
-    actual destination is reliably the farthest point reached from the start."""
+    actual destination is reliably the farthest point reached from the start.
+
+    Known to be an imperfect proxy - a connecting airport can measure
+    marginally farther from home than the real destination once a layover is
+    involved (confirmed live: a Nassau stopover, Auckland Airport's own
+    suburb), and an "interior waypoint, most-common city" alternative was
+    tried and dropped after it introduced its own regressions elsewhere
+    (correctly-labelled trips became wrong). Left as this simple version
+    deliberately: primary_city/primary_country now only feed the trip-card
+    photo search query, not the headline label (see Trip.name), so an
+    occasional wrong-but-nearby city costs a slightly-off photo rather than
+    a wrong displayed destination."""
     if not visits:
         return None, None, None
     origin = visits[0]
@@ -193,6 +217,7 @@ def run(kml_path: Path) -> None:
             # multi-week "trip" before this was made explicit per-folder.
             trip = Trip(start_ts=visits[0].start_ts, end_ts=visits[-1].end_ts, source="kml_import")
             trip.primary_city, trip.primary_country, trip.primary_country_code = _farthest_city_country(visits)
+            trip.name = clean_trip_name(trip_name)
             session.add(trip)
             session.flush()
             for v in visits:
