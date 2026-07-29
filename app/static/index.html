@@ -327,7 +327,7 @@
                 <div class="empty-state">No trips detected yet — set a home location in Settings so Waypoint can tell when you're away.</div>
               </template>
               <div class="grid-cards">
-                <template x-for="d in trips.data.destinations" :key="(d.name || '') + '|' + (d.primary_city || '') + '|' + (d.primary_country || '')">
+                <template x-for="d in trips.data.destinations" :key="d.trips[0].id">
                   <div class="trip-card" x-data="{imgFailed: false, expanded: false}"
                        @click="d.trip_count > 1 ? (expanded = !expanded) : openTrip(d.trips[0].id)">
                     <div class="banner" :class="!imgFailed && (d.primary_city || d.primary_country) && 'has-photo'">
