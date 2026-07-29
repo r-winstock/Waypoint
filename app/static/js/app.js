@@ -747,6 +747,20 @@ function waypoint() {
     insightsYearlyPointerLeave() {
       this.insightsYearlyHover = null;
     },
+    // A dot per year, as one static path (a pair of arcs per point) rather
+    // than a <template x-for> inside the <svg> - confirmed elsewhere in this
+    // file (the Day view's own history chart) that Alpine's x-for/x-if
+    // don't reliably work inside SVG/foreign content in this environment.
+    insightsYearlyDotsPath() {
+      const r = 3;
+      return this.insightsYearlyYears()
+        .map((y, i) => {
+          const x = this.insightsYearlyX(i);
+          const cy = this.insightsYearlyY(y.distance_m);
+          return `M ${(x - r).toFixed(1)},${cy.toFixed(1)} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 ${-r * 2},0`;
+        })
+        .join(' ');
+    },
 
     // ─── Insights: seasonality (Trends subtab) ───
     // "Which calendar month do you travel most", aggregated across every
@@ -778,6 +792,16 @@ function waypoint() {
     monthName(monthNum, short) {
       const d = new Date(2000, monthNum - 1, 1);
       return d.toLocaleDateString('en-GB', { month: short ? 'short' : 'long' });
+    },
+    // Northern-hemisphere seasons - a fair assumption for this specific,
+    // personal, UK-based deployment (every trip in this dataset originates
+    // from home in England), not something this app would want to guess at
+    // for an arbitrary user elsewhere in the world.
+    seasonEmoji(monthNum) {
+      if ([12, 1, 2].includes(monthNum)) return '❄️';
+      if ([3, 4, 5].includes(monthNum)) return '🌸';
+      if ([6, 7, 8].includes(monthNum)) return '☀️';
+      return '🍂';
     },
 
     // ─── Insights: all-time breakdown (Breakdown subtab) ───

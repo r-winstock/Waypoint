@@ -321,6 +321,7 @@ h1, h2, h3, .display {
    "one series is the point, rest are context" guidance) ─── */
 .seasonality-chart { display: flex; align-items: flex-end; gap: 6px; height: 160px; padding: 0 4px; }
 .seasonality-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.seasonality-bar-season { font-size: 15px; line-height: 1; margin-bottom: 4px; }
 .seasonality-bar-value { font-size: 10px; color: var(--wp-fg-dim); margin-bottom: 2px; white-space: nowrap; }
 .seasonality-bar { width: 100%; border-radius: 3px 3px 0 0; background: var(--wp-surface-3); }
 .seasonality-bar.peak { background: var(--wp-accent); }
@@ -329,11 +330,15 @@ h1, h2, h3, .display {
 /* ─── Insights Breakdown: all-time ranked bar lists (a many-category
    part-to-whole breakdown reads better as a sorted horizontal bar list than
    a many-slice donut - see the dataviz skill's series-count ladder) ─── */
-.rank-bars { display: flex; flex-direction: column; gap: 8px; }
-.rank-bar-row { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: 10px; }
+.rank-bars { display: flex; flex-direction: column; gap: 10px; }
+.rank-bar-row { display: grid; grid-template-columns: 28px 120px 1fr 70px; align-items: center; gap: 10px; }
+.rank-bar-icon {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
 .rank-bar-label { font-size: 13px; color: var(--wp-fg-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rank-bar-track { height: 10px; border-radius: 5px; background: var(--wp-surface-2); overflow: hidden; }
-.rank-bar-fill { height: 100%; border-radius: 5px; min-width: 2px; }
+.rank-bar-fill { height: 100%; border-radius: 5px; min-width: 2px; transition: width 0.4s ease; }
 .rank-bar-value { font-size: 12px; color: var(--wp-fg-muted); text-align: right; white-space: nowrap; }
 
 /* Activity heatmap (GitHub-contributions style) - a week per column, a
@@ -366,6 +371,7 @@ h1, h2, h3, .display {
 .history-chart-area { fill: var(--wp-accent); opacity: 0.18; }
 .history-chart-line { fill: none; stroke: var(--wp-accent); stroke-width: 2.5; }
 .history-chart-peak-dot { fill: var(--wp-accent-light); stroke: var(--wp-surface-1); stroke-width: 1.5; }
+.history-chart-point-dot { fill: var(--wp-accent); opacity: 0.6; }
 .history-chart-axis-label { color: var(--wp-fg-dim); font-size: 11px; font-family: var(--wp-font-body); white-space: nowrap; }
 .history-chart-playhead { stroke: var(--wp-fg-primary); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; pointer-events: none; }
 

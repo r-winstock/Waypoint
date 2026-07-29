@@ -590,7 +590,7 @@
       <div x-show="insights.subtab==='trends'">
         <div class="mb-6 history-chart-card">
           <div class="flex items-center justify-between mb-1">
-            <div class="text-xs" style="color: var(--wp-fg-dim)">Distance travelled per year</div>
+            <div class="text-xs flex items-center gap-1" style="color: var(--wp-fg-dim)"><span>📈</span> Distance travelled per year</div>
             <div class="text-xs font-medium tabular" style="color: var(--wp-accent-light); min-height: 15px"
                  x-show="insightsYearlyHover" x-text="insightsYearlyHover && (insightsYearlyHover.year.year + ' · ' + formatMiles(insightsYearlyHover.year.distance_m))"></div>
           </div>
@@ -599,6 +599,14 @@
                  @pointermove="insightsYearlyPointerMove($event)" @pointerleave="insightsYearlyPointerLeave()">
               <path :d="insightsYearlyAreaPath()" class="history-chart-area"></path>
               <path :d="insightsYearlyLinePath()" class="history-chart-line"></path>
+              <!-- One dot per year, drawn as a single static path (a pair of
+                   arcs per point, standard SVG "path of dots" technique) -
+                   NOT a <template x-for>, which doesn't reliably work inside
+                   <svg> in this app (see the Day view's own history chart
+                   comment above on this exact landmine: browsers don't give
+                   an SVG-context <template> the DocumentFragment .content
+                   Alpine's cloning relies on). -->
+              <path :d="insightsYearlyDotsPath()" class="history-chart-point-dot"></path>
               <circle x-show="insightsYearlyPeakPoint()" :cx="insightsYearlyPeakPoint() && insightsYearlyPeakPoint().x" :cy="insightsYearlyPeakPoint() && insightsYearlyPeakPoint().y"
                       r="4" class="history-chart-peak-dot"></circle>
               <line x-show="insightsYearlyHover" :x1="insightsYearlyHover && insightsYearlyHover.x" :x2="insightsYearlyHover && insightsYearlyHover.x" y1="0" y2="200" class="history-chart-playhead"></line>
@@ -612,13 +620,15 @@
         </div>
 
         <div class="mb-2">
-          <div class="text-base font-semibold" x-show="insightsSeasonalityPeakMonth()">
+          <div class="text-base font-semibold flex items-center gap-2" x-show="insightsSeasonalityPeakMonth()">
+            <span>☀️</span>
             <span x-text="'You travel most in ' + monthName(insightsSeasonalityPeakMonth().month)"></span>
           </div>
         </div>
         <div class="seasonality-chart mb-6">
           <template x-for="m in insightsSeasonalityMonths()" :key="m.month">
             <div class="seasonality-bar-col">
+              <div class="seasonality-bar-season" x-text="seasonEmoji(m.month)"></div>
               <div class="seasonality-bar-value tabular" x-text="m.distance_m > 0 ? formatMiles(m.distance_m) : ''"></div>
               <div class="seasonality-bar" :class="insightsSeasonalityPeakMonth() && m.month === insightsSeasonalityPeakMonth().month && 'peak'"
                    :style="`height: ${insightsSeasonalityBarHeight(m)}px`"></div>
@@ -634,6 +644,9 @@
         <div class="rank-bars mb-6">
           <template x-for="t in insightsBreakdownTravelSorted()" :key="t.mode">
             <div class="rank-bar-row">
+              <div class="rank-bar-icon" :style="`background: var(--wp-mode-${t.mode})`">
+                <i :data-lucide="modeIcon(t.mode)" class="w-3.5 h-3.5" style="color: #fff"></i>
+              </div>
               <div class="rank-bar-label capitalize" x-text="t.mode"></div>
               <div class="rank-bar-track">
                 <div class="rank-bar-fill" :style="`width: ${(t.distance_m / insightsBreakdownTravelMax() * 100).toFixed(1)}%; background: var(--wp-mode-${t.mode})`"></div>
@@ -650,6 +663,9 @@
         <div class="rank-bars mb-6">
           <template x-for="v in insightsBreakdownVisitsSorted()" :key="v.category">
             <div class="rank-bar-row" style="cursor: pointer" @click="switchTab('places'); openCategory(v.category)">
+              <div class="rank-bar-icon" :style="`background: ${categoryColorVar(v.category)}`">
+                <span style="font-size: 14px; line-height: 1" x-text="categoryIcon(v.category)"></span>
+              </div>
               <div class="rank-bar-label" x-text="v.category"></div>
               <div class="rank-bar-track">
                 <div class="rank-bar-fill" :style="`width: ${(v.duration_s / insightsBreakdownVisitsMax() * 100).toFixed(1)}%; background: ${categoryColorVar(v.category)}`"></div>
