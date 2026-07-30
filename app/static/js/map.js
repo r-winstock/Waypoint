@@ -104,6 +104,17 @@ function wpAddLayer(map, layer) {
 }
 
 function wpInitMap(containerId, opts = {}) {
+  // Guards against a real recurring shape: several detail views tear down
+  // and recreate their own map container via x-if (see closeAllDetails'
+  // own comment on this), so a re-render triggered while a *different*
+  // view's detail is open (e.g. correcting a place from within Trip
+  // detail, which refreshes the Trips tab's own overview data/map in the
+  // background) can fire against a container that isn't in the DOM at all
+  // right now. L.map() throws "Map container not found" in that case -
+  // returning null instead lets the caller's own render function bail
+  // quietly (they all already check `if (!this.trips.map) ...` etc.,
+  // never assuming wpInitMap succeeded before that point regardless).
+  if (!document.getElementById(containerId)) return null;
   // maxBounds was tried alongside noWrap to fix the repeated-world tiles,
   // but it fought panning/zooming near the antimeridian hard enough that
   // New Zealand (~175°E) became unreachable, confirmed live. noWrap on the

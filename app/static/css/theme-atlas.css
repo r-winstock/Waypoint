@@ -48,8 +48,27 @@
   --wp-warn-bg: rgba(245, 158, 11, 0.25);
   --wp-warn-border: rgba(245, 158, 11, 0.5);
 
-  --wp-shadow-card: 0 6px 24px rgba(16, 185, 129, 0.08);
+  /* The inset highlight is the actual "glass" cue - a translucent panel
+     alone (background: rgba(...)) just reads as a flat dark box slightly
+     lighter than the page behind it; a 1px lighter inset top edge is what
+     sells "light catching a glass surface" the way the theme's own name
+     promises. */
+  --wp-shadow-card: 0 6px 24px rgba(16, 185, 129, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.07);
   --wp-shadow-modal: 0 24px 48px rgba(0, 0, 0, 0.5);
+
+  /* Backdrop blur is what actually makes a translucent surface (--wp-surface-1
+     etc, all rgba() in this theme) look like frosted glass rather than a
+     flat dark box at reduced opacity - defaults to 0px everywhere else (see
+     components.css), so this is the only theme where panels actually blur
+     what's behind them. */
+  --wp-card-blur: 16px;
+
+  /* Accent glow for interactive/active states only (primary button hover,
+     the active nav tab) - not applied ambiently everywhere, that read as
+     garish rather than premium once tried broadly. Undefined in Voyage, so
+     brass/parchment surfaces never try to glow. */
+  --wp-glow-accent: 0 0 16px rgba(16, 185, 129, 0.35);
+  --wp-marker-glow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 8px rgba(16, 185, 129, 0.45);
 
   /* Place categories */
   --wp-cat-food: #3b82f6;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.country_names import country_name_en
@@ -185,4 +186,42 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
         "primary_country_code": trip.primary_country_code,
         "timeline": timeline,
         "photos": unassigned_photos,
+    }
+
+
+class TripCorrection(BaseModel):
+    name: str | None = None
+    primary_city: str | None = None
+    primary_country: str | None = None
+    primary_country_code: str | None = None
+
+
+@router.put("/api/trips/{trip_id}")
+def correct_trip(trip_id: int, correction: TripCorrection, session: Session = Depends(db_dependency)):
+    """Manually override a trip's own destination, same "Fix this place"
+    pattern as PUT /api/places/detail/{place_id} - primary_city/
+    primary_country/primary_country_code are a geometric best-guess (see
+    _farthest_city_country/_primary_city_country) that's sometimes wrong
+    about what someone actually considers the "real" destination of a trip
+    (a connecting airport outweighing the city itself), and name has no
+    heuristic at all for "computed" trips (only ever set from a KML
+    folder's own name on import - see scripts/import_travellerspoint_kml.py).
+    Sets all three together (rather than name alone) since primary_city/
+    primary_country double as the photo-search query/hint on trip cards -
+    leaving them pointed at the old, wrong place after a correction would
+    keep showing the wrong photo under the new name."""
+    trip = session.get(Trip, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    trip.name = correction.name
+    trip.primary_city = correction.primary_city
+    trip.primary_country = correction.primary_country
+    trip.primary_country_code = correction.primary_country_code.upper() if correction.primary_country_code else None
+    session.commit()
+    return {
+        "id": trip.id,
+        "name": trip.name,
+        "primary_city": trip.primary_city,
+        "primary_country": country_name_en(trip.primary_country_code, trip.primary_country),
+        "primary_country_code": trip.primary_country_code,
     }

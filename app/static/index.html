@@ -102,6 +102,10 @@
     </div>
   </header>
 
+  <img class="voyage-flourish" src="/static/images/divider-bunting.png" alt=""
+       style="margin: 4px auto 0; width: min(560px, 80%); opacity: .85"
+       onerror="this.style.display='none'">
+
   <main class="max-w-[1400px] mx-auto px-6 py-6">
 
     <!-- ═══════════ DAY ═══════════ -->
@@ -393,7 +397,12 @@
       <template x-if="trips.detail">
         <div>
           <button class="nav-tab mb-3" @click="history.back()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Back to trips</button>
-          <div class="text-lg font-semibold display mb-1" x-text="trips.detail.name || trips.detail.primary_city || trips.detail.primary_country || 'Trip'"></div>
+          <div class="flex items-center gap-2 mb-1">
+            <div class="text-lg font-semibold display" x-text="trips.detail.name || trips.detail.primary_city || trips.detail.primary_country || 'Trip'"></div>
+            <button class="btn-icon" style="width: 24px; height: 24px" title="Wrong destination? Fix it" @click="openTripEdit(trips.detail)">
+              <i data-lucide="pencil" class="w-3 h-3"></i>
+            </button>
+          </div>
           <div class="text-sm mb-4" style="color: var(--wp-fg-muted)" x-text="formatDateRange(trips.detail.start_ts, trips.detail.end_ts) + ' · ' + trips.detail.days + ' day' + (trips.detail.days > 1 ? 's' : '')"></div>
 
           <template x-if="trips.detail.photos && trips.detail.photos.length">
@@ -1104,6 +1113,10 @@
 
   </main>
 
+  <img class="voyage-flourish" src="/static/images/divider-strap.png" alt=""
+       style="margin: 24px auto 0; width: min(420px, 60%); opacity: .85"
+       onerror="this.style.display='none'">
+
   <footer class="text-xs text-center py-3" style="color: var(--wp-fg-faint)" x-show="appVersion">
     Waypoint <span x-text="appVersion"></span>
   </footer>
@@ -1251,6 +1264,45 @@
         <button class="btn-ghost" @click="closeConvertSegment()">Cancel</button>
         <button class="btn-primary" :disabled="segmentConvert.saving" @click="saveConvertSegment()">
           <span x-text="segmentConvert.saving ? 'Saving…' : 'Convert to visit'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ TRIP DESTINATION CORRECTION MODAL ═══════════ -->
+  <div class="modal-backdrop" x-show="tripEdit.open" @click.self="closeTripEdit()" style="display: none">
+    <div class="modal">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold display">Wrong destination?</h3>
+        <button class="btn-icon" @click="closeTripEdit()"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+
+      <label class="field-label">Search for the real destination</label>
+      <div class="flex gap-2 mb-2">
+        <input type="text" class="field-input" placeholder="e.g. Liverpool" x-model="tripEdit.searchQuery" @keydown.enter="searchTripPlaces()">
+        <button type="button" class="btn-ghost" :disabled="tripEdit.searching" @click="searchTripPlaces()">
+          <span x-text="tripEdit.searching ? 'Searching…' : 'Search'"></span>
+        </button>
+      </div>
+      <div class="mb-3">
+        <template x-for="result in tripEdit.searchResults" :key="result.display_name">
+          <button type="button" class="alt-option" @click="selectTripSearchResult(result)">
+            <div class="flex items-center justify-between">
+              <span x-text="result.name"></span>
+              <span class="text-xs" style="color: var(--wp-fg-dim)" x-show="result.distance_m != null" x-text="(result.distance_m/1000).toFixed(1) + ' km'"></span>
+            </div>
+            <div class="text-xs" style="color: var(--wp-fg-dim)" x-text="result.display_name"></div>
+          </button>
+        </template>
+      </div>
+
+      <label class="field-label">Name</label>
+      <input type="text" class="field-input" x-model="tripEdit.name">
+
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="btn-ghost" @click="closeTripEdit()">Cancel</button>
+        <button class="btn-primary" :disabled="tripEdit.saving" @click="saveTripEdit()">
+          <span x-text="tripEdit.saving ? 'Saving…' : 'Save'"></span>
         </button>
       </div>
     </div>

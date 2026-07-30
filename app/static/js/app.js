@@ -177,6 +177,12 @@ function waypoint() {
       searchQuery: '', searchResults: [], searching: false, saving: false,
     },
 
+    tripEdit: {
+      open: false, tripId: null, name: '', primaryCity: '', primaryCountry: '', primaryCountryCode: '',
+      biasLat: null, biasLon: null,
+      searchQuery: '', searchResults: [], searching: false, saving: false,
+    },
+
     photoViewer: { open: false, photo: null },
     openPhotoViewer(photo) { this.photoViewer = { open: true, photo }; },
     closePhotoViewer() { this.photoViewer.open = false; },
@@ -313,10 +319,15 @@ function waypoint() {
       this.world.detail = null;
       this.places.category = null;
       this.places.categoryData = null;
-      if (wasTripDetail && this.trips.map) {
-        this.trips.map.remove();
-        this.trips.map = null;
-        this.$nextTick(() => this.renderTripsMap());
+      if (wasTripDetail) {
+        if (this.trips.map) { this.trips.map.remove(); this.trips.map = null; }
+        // trips.data is nulled out by saveTripEdit when a rename may have
+        // moved the trip into a different destination-card group (see its
+        // own comment) - a plain re-render of the stale cached list/map
+        // would still show the old grouping, so this needs a real refetch
+        // instead, same as first opening the tab.
+        if (!this.trips.data) this.$nextTick(() => this.loadTrips());
+        else this.$nextTick(() => this.renderTripsMap());
       }
       if (wasCountryDetail && this.world.map) {
         this.world.map.remove();
@@ -1311,6 +1322,106 @@ function waypoint() {
       if (this.tab === 'places') return this.loadPlaces();
       if (this.tab === 'cities') return this.loadCities();
       if (this.tab === 'world') return this.loadWorld();
+    },
+
+    // ─── Trip destination correction ───
+    // Same "Fix this place" pattern as placeEdit above, for a Trip's own
+    // display name/city/country rather than a Place row - motivated by
+    // primary_city/primary_country being a geometric best-guess (see
+    // _farthest_city_country) that's sometimes wrong about what someone
+    // actually considers "the" destination of a trip (a connecting airport
+    // outweighing the city itself - confirmed live for Kennessee Green,
+    // counted as "Liverpool" by whoever actually took the trip), and
+    // Trip.name having no heuristic at all for "computed" (non-KML) trips.
+    // No nearby-alternatives/similar-places lookups here (those are
+    // Overpass/Place-row concepts, a Trip has neither) - just the free-text
+    // search box, reusing the exact same /api/places/search endpoint.
+    openTripEdit(trip) {
+      const bias = this.tripEditBiasLatLon();
+      this.tripEdit = {
+        open: true, tripId: trip.id,
+        name: trip.name || '', primaryCity: trip.primary_city || '',
+        primaryCountry: trip.primary_country || '', primaryCountryCode: trip.primary_country_code || '',
+        biasLat: bias ? bias.lat : null, biasLon: bias ? bias.lon : null,
+        searchQuery: '', searchResults: [], searching: false, saving: false,
+      };
+    },
+    // Search bias only (Nominatim's viewbox is a soft, unbounded hint - see
+    // search_places), so it just needs to land roughly near the trip's real
+    // destination, not be authoritative. Reuses the exact "farthest visit
+    // from the trip's own first visit" logic already proven for the Trips
+    // overview map's own pin placement (tripDestinationPin) - a KML trip's
+    // first visit is its near-home departure point, not the destination
+    // (confirmed live: USA/Canada pins were landing in the UK), so biasing
+    // off visits[0] directly would be actively wrong rather than merely
+    // unhelpful.
+    tripEditBiasLatLon() {
+      const visits = ((this.trips.detail && this.trips.detail.timeline) || []).filter((e) => e.type === 'visit');
+      if (!visits.length) return null;
+      const origin = visits[0];
+      let best = origin;
+      let bestDist = -1;
+      for (const v of visits) {
+        const dist = wpHaversineM([origin.lat, origin.lon], [v.lat, v.lon]);
+        if (dist > bestDist) { bestDist = dist; best = v; }
+      }
+      return best;
+    },
+    async searchTripPlaces() {
+      if (!this.tripEdit.searchQuery.trim()) return;
+      this.tripEdit.searching = true;
+      try {
+        const params = new URLSearchParams({ q: this.tripEdit.searchQuery });
+        if (this.tripEdit.biasLat != null) {
+          params.set('lat', this.tripEdit.biasLat);
+          params.set('lon', this.tripEdit.biasLon);
+        }
+        const res = await fetch(`/api/places/search?${params}`);
+        const data = await res.json();
+        this.tripEdit.searchResults = data.results || [];
+      } catch (e) { console.error('Failed to search places', e); }
+      finally { this.tripEdit.searching = false; }
+    },
+    selectTripSearchResult(result) {
+      this.tripEdit.name = result.name;
+      // city can be blank for a city-level search result itself (Nominatim
+      // reports its own address.city for districts/suburbs *within* a
+      // city, not the city match itself) - falling back to the picked
+      // name keeps primary_city (the photo-search query) meaningful rather
+      // than blank in that common case.
+      this.tripEdit.primaryCity = result.city || result.name;
+      this.tripEdit.primaryCountry = result.country || '';
+      this.tripEdit.primaryCountryCode = result.country_code || '';
+      this.tripEdit.searchResults = [];
+      this.tripEdit.searchQuery = '';
+    },
+    closeTripEdit() { this.tripEdit.open = false; },
+    async saveTripEdit() {
+      this.tripEdit.saving = true;
+      try {
+        const res = await fetch(`/api/trips/${this.tripEdit.tripId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: this.tripEdit.name || null,
+            primary_city: this.tripEdit.primaryCity || null,
+            primary_country: this.tripEdit.primaryCountry || null,
+            primary_country_code: this.tripEdit.primaryCountryCode || null,
+          }),
+        });
+        const data = await res.json();
+        this.tripEdit.open = false;
+        if (this.trips.detail && this.trips.detail.id === data.id) Object.assign(this.trips.detail, data);
+        // Renaming can move this trip into a different destination-card
+        // group (the grouping key includes name - see get_trips in
+        // app/api/trips.py), so the cached overview list/map data can't
+        // just be patched in place - drop both, they'll refetch next time
+        // the overview is actually shown (loadTrips/loadTripsMapData both
+        // already guard on "not already loaded", same as on first tab entry).
+        this.trips.data = null;
+        this.trips.allDestinations = null;
+      } catch (e) { console.error('Failed to save trip correction', e); }
+      finally { this.tripEdit.saving = false; }
     },
 
     // ─── Timeline event editing ───

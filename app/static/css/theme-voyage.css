@@ -96,4 +96,74 @@
   --wp-map-popup-bg: #f1e9d3;
   --wp-map-popup-fg: #2a2417;
   --wp-map-popup-accent: #e0a852;
+
+  --wp-bg-texture: url('/static/images/paper-texture.jpg');
+
+  /* Explicit "off" values for Atlas's dark-glass tokens (blur/glow) - these
+     MUST be set here, not left to var()'s own fallback default, because
+     theme-atlas.css scopes its whole token block to bare :root as well as
+     :root[data-theme="atlas"] (a deliberate default-before-Alpine-loads
+     mechanism, avoiding a flash of unstyled content). That means any token
+     only ever defined in Atlas cascades onto every element regardless of
+     which theme is actually active - confirmed live, paper cards were
+     getting a 16px backdrop-blur under Voyage before this fix, since
+     Voyage's own block never mentioned --wp-card-blur at all and so never
+     out-competed Atlas's bare :root rule for that property. */
+  --wp-card-blur: 0px;
+  --wp-glow-accent: none;
+  --wp-marker-glow: 0 2px 5px rgba(43, 30, 10, 0.4);
+}
+
+/* ---------- Voyage-only structural flourishes ----------
+   Everything above is pure token values (the file's original scope);
+   everything below is real structural CSS, kept here rather than in the
+   theme-agnostic components.css specifically so Atlas never has to know
+   any of this exists. Ports the plan's own deferred "Voyage-style postcard
+   corners on every card type" item using the assets Richard generated. */
+
+:root[data-theme="voyage"] .voyage-flourish { display: block; }
+
+/* Photo-corner mounts, evoking a print tucked into a travel journal rather
+   than a plain rectangle. Two opposing corners, not all four - ::before/
+   ::after are the only two pseudo-element slots one real element offers,
+   and a diagonal pair already reads as intentional album-page styling
+   without needing four separate image assets or extra DOM nodes. */
+:root[data-theme="voyage"] .trip-card .banner::before,
+:root[data-theme="voyage"] .grid-card--photo::before,
+:root[data-theme="voyage"] .story-card::before,
+:root[data-theme="voyage"] .trip-card .banner::after,
+:root[data-theme="voyage"] .grid-card--photo::after,
+:root[data-theme="voyage"] .story-card::after {
+  content: '';
+  position: absolute;
+  width: 44px; height: 41px;
+  background: url('/static/images/photo-corner.png') no-repeat;
+  background-size: contain;
+  z-index: 3;
+  pointer-events: none;
+}
+:root[data-theme="voyage"] .trip-card .banner::before,
+:root[data-theme="voyage"] .grid-card--photo::before,
+:root[data-theme="voyage"] .story-card::before {
+  top: 0; left: 0;
+}
+:root[data-theme="voyage"] .trip-card .banner::after,
+:root[data-theme="voyage"] .grid-card--photo::after,
+:root[data-theme="voyage"] .story-card::after {
+  bottom: 0; right: 0;
+  transform: rotate(180deg);
+}
+
+/* Map marker badge - a softened asymmetric corner rather than a perfect
+   circle, evoking a hand-stamped travel pin. Deliberately NOT a full
+   teardrop: these markers' iconSize/iconAnchor are set once in JS (see
+   wpCategoryIcon in map.js) and never recalculated per theme, so reshaping
+   this into a tall teardrop would need its own anchor point (bottom tip,
+   not centre) to look right - that means theme-aware marker construction
+   plus a redraw hook on every theme switch, neither of which exists today.
+   Not worth that risk for a small map pin; this stays within the exact
+   same 20x20 footprint/centre-anchor the plain circle already uses safely. */
+:root[data-theme="voyage"] .wp-map-marker-badge {
+  border-radius: 50% 50% 50% 4px;
+  box-shadow: 0 2px 5px rgba(43, 30, 10, 0.4);
 }
