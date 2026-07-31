@@ -23,10 +23,21 @@ row it changes) so a later OSM-based reclassify pass doesn't revert a
 Google-sourced category back to a weaker OSM-tag guess.
 
 Category is only ever replaced when the place is still sitting in a generic
-bucket ("Other places" or "Streets and roads") - a category the OSM-tag
-based reclassify already resolved with confidence is left alone, since
-Google's own type taxonomy isn't inherently more authoritative than a
-correctly-matched OSM tag, only better than no real tag at all.
+bucket ("Other places", "Streets and roads", or "Transport") - a category
+the OSM-tag based reclassify already resolved with confidence is left
+alone, since Google's own type taxonomy isn't inherently more authoritative
+than a correctly-matched OSM tag, only better than no real tag at all.
+"Transport" is included as generic (not just the placeholder two) because,
+unlike a direct amenity/shop tag match, geocoding.py's OSM rules derive it
+largely from *infrastructure* tags (parking, fuel, charging_station,
+bus_stop) that describe something adjacent to a place rather than the
+place's own identity - Nominatim reverse-geocoding a business's coordinates
+frequently snaps to a nearby parking-lot tag instead of the business itself
+(confirmed live: "One Stop Bedford Avon", an actual convenience store,
+carried "Transport" purely from a nearby amenity=parking tag). Real
+stations/airports aren't at risk from this widening: Google's own taxonomy
+maps train_station/bus_station/subway_station back to "Transport" too, so a
+genuine station is a same-value no-op here, not a wrong overwrite.
 
 A handful of placeIds resolve to a broad locality/transit-hub entry rather
 than the actual specific spot - confirmed live ("Ashburnham Road" would
@@ -54,7 +65,7 @@ from app.db import SessionLocal, init_db  # noqa: E402
 from app.google_places import GOOGLE_TYPE_TO_CATEGORY, api_key, place_details  # noqa: E402
 from app.models import Place  # noqa: E402
 
-GENERIC_CATEGORIES = {"Other places", "Streets and roads"}
+GENERIC_CATEGORIES = {"Other places", "Streets and roads", "Transport"}
 
 
 def run(apply: bool) -> None:
@@ -94,7 +105,7 @@ def run(apply: bool) -> None:
                 if apply:
                     place.name = new_name
                 changed = True
-            if mapped_category and place.category in GENERIC_CATEGORIES:
+            if mapped_category and mapped_category != place.category and place.category in GENERIC_CATEGORIES:
                 print(f"place {place.id}: category {place.category!r} -> {mapped_category!r}")
                 if apply:
                     place.category = mapped_category

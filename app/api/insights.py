@@ -541,25 +541,74 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     # vel capped at exactly 40.0 across the whole dataset, a suspiciously
     # round ceiling that reads as a device/import artifact rather than a
     # real top speed, so it's not trustworthy for a headline number the way
-    # the already-proven distance_m/duration_s pairing is. >=60s duration
-    # only - a few seconds' worth of GPS jitter can imply an absurd speed
-    # over a genuinely tiny real distance.
+    # distance_m/duration_s is. But a bare MAX() over that ratio isn't
+    # trustworthy either - confirmed live it surfaced a "2005 km/h flight"
+    # (stored distance_m carrying flying's own documented bad-distance
+    # risk - see longest_by_mode's flying branch) and a "734 km/h train"
+    # (a 138s segment with an implausibly large stored distance, i.e. a bad
+    # segment, not a fast train). Being a MAX() over a *ratio* makes this
+    # record uniquely exposed to any single distance/duration artifact
+    # anywhere in the dataset, unlike longest_by_mode where distance alone
+    # doesn't blow up the same way. Two guards: a real-world plausible top
+    # speed per mode (generous ceilings - elite sustained pace, fastest
+    # scheduled rail, realistic jet-stream-boosted cruise ground speed for
+    # flying - not physical limits, just "further than this is bad data,
+    # not a record"), and for flying specifically, the same real-haversine-
+    # endpoint recomputation longest_by_mode already relies on rather than
+    # trusting stored distance_m at all.
+    MODE_SPEED_CEILING_KMH = {
+        "walking": 25, "cycling": 60, "driving": 180, "taxi": 150, "bus": 130,
+        "train": 350, "subway": 100, "tram": 80, "ferry": 90, "boating": 80,
+        "flying": 1200,
+    }
     FASTEST_MIN_DURATION_S = 60
-    speed_expr = TripSegment.distance_m / TripSegment.duration_s
-    fastest_row = (
-        session.query(TripSegment.mode, TripSegment.distance_m, TripSegment.duration_s, TripSegment.start_ts)
-        .filter(TripSegment.duration_s >= FASTEST_MIN_DURATION_S)
-        .order_by(speed_expr.desc())
-        .first()
-    )
+    FASTEST_FLYING_CANDIDATES = 30
     fastest_journey = None
-    if fastest_row:
-        kmh = (fastest_row.distance_m / 1000) / (fastest_row.duration_s / 3600)
-        fastest_journey = {
-            "mode": fastest_row.mode,
-            "kmh": round(kmh),
-            "day": datetime.fromtimestamp(fastest_row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
-        }
+    best_kmh = 0.0
+    for mode, ceiling_kmh in MODE_SPEED_CEILING_KMH.items():
+        if mode == "flying":
+            candidates = (
+                session.query(TripSegment.duration_s, TripSegment.start_ts, TripSegment.end_ts)
+                .filter(TripSegment.mode == mode, TripSegment.duration_s >= FASTEST_MIN_DURATION_S)
+                .order_by((TripSegment.distance_m / TripSegment.duration_s).desc())
+                .limit(FASTEST_FLYING_CANDIDATES)
+                .all()
+            )
+            for cand in candidates:
+                before_row = _nearest_place(Visit.end_ts <= cand.start_ts, Visit.end_ts.desc())
+                after_row = _nearest_place(Visit.start_ts >= cand.end_ts, Visit.start_ts.asc())
+                if not before_row or not after_row:
+                    continue
+                real_distance = _haversine_m(before_row.lat_round, before_row.lon_round, after_row.lat_round, after_row.lon_round)
+                kmh = (real_distance / 1000) / (cand.duration_s / 3600)
+                if kmh <= ceiling_kmh and kmh > best_kmh:
+                    best_kmh = kmh
+                    fastest_journey = {
+                        "mode": mode,
+                        "kmh": round(kmh),
+                        "day": datetime.fromtimestamp(cand.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+                    }
+        else:
+            row = (
+                session.query(TripSegment.distance_m, TripSegment.duration_s, TripSegment.start_ts)
+                .filter(
+                    TripSegment.mode == mode,
+                    TripSegment.duration_s >= FASTEST_MIN_DURATION_S,
+                    TripSegment.distance_m / TripSegment.duration_s <= ceiling_kmh / 3.6,
+                )
+                .order_by((TripSegment.distance_m / TripSegment.duration_s).desc())
+                .first()
+            )
+            if row is None:
+                continue
+            kmh = (row.distance_m / 1000) / (row.duration_s / 3600)
+            if kmh > best_kmh:
+                best_kmh = kmh
+                fastest_journey = {
+                    "mode": mode,
+                    "kmh": round(kmh),
+                    "day": datetime.fromtimestamp(row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+                }
 
     # McDonald's world tour - confirmed live this dataset has 34 distinct
     # branches across 231 visits, easily the most-represented chain by a
