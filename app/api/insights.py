@@ -251,13 +251,78 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     # top handful of candidates against their own true distance and ranking
     # by *that* costs little and can't be fooled by a single bad upstream
     # number the way "just trust the biggest stored value" can.
+    # Journey chaining, for longest_journey/longest_by_mode only: the
+    # pipeline stores one TripSegment per travel leg, so a single real
+    # journey that included a stop (an overnight train's intermediate
+    # station, a flight's layover) shows up as two-plus separate segments
+    # either side of a Visit there - confirmed live ("longest train
+    # journey" showing La Spezia -> Tarvisio Boscoverde, 406mi, when the
+    # real journey continued past an overnight pause). Chains adjacent
+    # same-mode segments across a gap of <=2h into one combined run. The
+    # original guess of 24h ("generous enough to cover an overnight stop")
+    # turned out actively wrong when tested against real data: the
+    # reported train case's own gap is under an hour (the "overnight" part
+    # is the resulting journey's span, not the pause itself - it's a
+    # sleeper train, the stop is brief), while a 24h ceiling applied to a
+    # daily mode like driving chained 82 unrelated same-day-ish segments
+    # spanning a full month into one nonsense "journey". 2h is comfortably
+    # inside the real train gap (confirmed identical from 1h to 6h - no
+    # cliff nearby) and comfortably below where driving starts blowing up
+    # (confirmed stable from 1h to 8h, then climbing sharply from 12h on -
+    # by 24h it's a 695-hour, 82-segment blob). Uses the raw time gap
+    # between segments rather than the Visit FK in between:
+    # start_visit_id/end_visit_id are only ever populated for
+    # source="owntracks" segments, so almost all real imported history has
+    # them null and an FK-based join would silently never chain anything.
+    # Purely a candidate pool for these two Records computations - the
+    # underlying Visit/TripSegment rows and every other view (Day, Trips)
+    # are untouched.
+    #
+    # "flying" is deliberately excluded from chaining, confirmed live to be
+    # actively harmful there: several "flying" segments in this dataset
+    # sit exactly on midnight-timestamp boundaries with inflated stored
+    # distances (the same known bad-data pattern fastest_journey's own
+    # per-mode ceiling above exists to catch), and chaining four of them
+    # together produced an 8-day, round-the-world "single flight". Flying
+    # already has its own dedicated real-haversine-endpoint safety net
+    # (below, and in longest_by_mode) built specifically because its raw
+    # stored distance_m can't be trusted standalone - that safety net
+    # assumes each candidate window is one real flight, an assumption
+    # chaining breaks. A layover/connection genuinely joining two flights
+    # into one itinerary is real, but indistinguishable here from two
+    # unrelated flights landing within a day of each other, so it's not
+    # worth the risk to a headline number this well-scrutinised.
+    PAUSE_MAX_S = 2 * 3600
+
+    def _chained_mode_runs() -> list[dict]:
+        segments = (
+            session.query(TripSegment.mode, TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
+            .order_by(TripSegment.start_ts)
+            .all()
+        )
+        runs: list[dict] = []
+        current: dict | None = None
+        for seg in segments:
+            if (
+                current is not None
+                and current["mode"] == seg.mode
+                and seg.mode != "flying"
+                and (seg.start_ts - current["end_ts"]) <= PAUSE_MAX_S
+            ):
+                current["distance_m"] += seg.distance_m
+                current["end_ts"] = seg.end_ts
+                continue
+            if current is not None:
+                runs.append(current)
+            current = {"mode": seg.mode, "distance_m": seg.distance_m, "start_ts": seg.start_ts, "end_ts": seg.end_ts}
+        if current is not None:
+            runs.append(current)
+        return runs
+
+    chained_runs = _chained_mode_runs()
+
     LONGEST_JOURNEY_CANDIDATES = 25
-    candidate_rows = (
-        session.query(TripSegment.mode, TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
-        .order_by(TripSegment.distance_m.desc())
-        .limit(LONGEST_JOURNEY_CANDIDATES)
-        .all()
-    )
+    candidate_rows = sorted(chained_runs, key=lambda r: r["distance_m"], reverse=True)[:LONGEST_JOURNEY_CANDIDATES]
 
     def _nearest_place(filter_expr, order_expr):
         return (
@@ -277,15 +342,15 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         # long-haul flight can be days later and back at the other end of the
         # trip - a confidently wrong "X to X" beats no answer, which this
         # exists specifically to avoid.
-        before_row = _nearest_place(Visit.end_ts <= cand.start_ts, Visit.end_ts.desc())
-        after_row = _nearest_place(Visit.start_ts >= cand.end_ts, Visit.start_ts.asc())
+        before_row = _nearest_place(Visit.end_ts <= cand["start_ts"], Visit.end_ts.desc())
+        after_row = _nearest_place(Visit.start_ts >= cand["end_ts"], Visit.start_ts.asc())
         if not before_row or not after_row:
             continue
         real_distance_m = _haversine_m(
             before_row.lat_round, before_row.lon_round, after_row.lat_round, after_row.lon_round
         )
         if best_candidate is None or real_distance_m > best_candidate[0]:
-            best_candidate = (real_distance_m, cand.mode, cand.start_ts, before_row, after_row)
+            best_candidate = (real_distance_m, cand["mode"], cand["start_ts"], before_row, after_row)
 
     longest_journey = None
     if best_candidate:
@@ -322,25 +387,21 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
     # hardcoded list" convention as TRAVEL_MODE_ORDER above.
     FLYING_CANDIDATES = 20
     longest_by_mode: dict[str, dict] = {}
-    modes_present = [row[0] for row in session.query(TripSegment.mode).distinct().all()]
-    for mode in modes_present:
+    runs_by_mode: dict[str, list[dict]] = {}
+    for run in chained_runs:
+        runs_by_mode.setdefault(run["mode"], []).append(run)
+    for mode, mode_runs in runs_by_mode.items():
+        mode_runs = sorted(mode_runs, key=lambda r: r["distance_m"], reverse=True)
         if mode == "flying":
-            # Deterministic tie-break (id, not just distance_m) - several
-            # segments can share the exact same stored distance (duplicate/
-            # near-duplicate rows from import), and SQLite doesn't
-            # guarantee a stable order among ties on a bare ORDER BY
-            # distance_m otherwise.
-            candidates = (
-                session.query(TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
-                .filter(TripSegment.mode == mode)
-                .order_by(TripSegment.distance_m.desc(), TripSegment.id)
-                .limit(FLYING_CANDIDATES)
-                .all()
-            )
+            # Tie-break isn't needed here the way the raw-segment version
+            # needed it (id, for stable ordering among duplicate stored
+            # distances) - chained runs are already distinct objects with
+            # no shared source rows to tie-break between.
+            candidates = mode_runs[:FLYING_CANDIDATES]
             resolved = None  # (real_distance_m, start_ts, before_row, after_row)
             for cand in candidates:
-                before_row = _nearest_place(Visit.end_ts <= cand.start_ts, Visit.end_ts.desc())
-                after_row = _nearest_place(Visit.start_ts >= cand.end_ts, Visit.start_ts.asc())
+                before_row = _nearest_place(Visit.end_ts <= cand["start_ts"], Visit.end_ts.desc())
+                after_row = _nearest_place(Visit.start_ts >= cand["end_ts"], Visit.start_ts.asc())
                 if not before_row or not after_row:
                     continue
                 real_distance = _haversine_m(before_row.lat_round, before_row.lon_round, after_row.lat_round, after_row.lon_round)
@@ -351,22 +412,15 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
                 # *resolves*, or it can settle for a smaller real distance
                 # than a later, properly-named candidate actually has.
                 if resolved is None or real_distance > resolved[0]:
-                    resolved = (real_distance, cand.start_ts, before_row, after_row)
+                    resolved = (real_distance, cand["start_ts"], before_row, after_row)
             if resolved is None:
                 continue
             distance_m, start_ts, before_row, after_row = resolved
         else:
-            top = (
-                session.query(TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
-                .filter(TripSegment.mode == mode)
-                .order_by(TripSegment.distance_m.desc())
-                .first()
-            )
-            if top is None:
-                continue
-            before_row = _nearest_place(Visit.end_ts <= top.start_ts, Visit.end_ts.desc())
-            after_row = _nearest_place(Visit.start_ts >= top.end_ts, Visit.start_ts.asc())
-            distance_m, start_ts = top.distance_m, top.start_ts
+            top = mode_runs[0]
+            before_row = _nearest_place(Visit.end_ts <= top["start_ts"], Visit.end_ts.desc())
+            after_row = _nearest_place(Visit.start_ts >= top["end_ts"], Visit.start_ts.asc())
+            distance_m, start_ts = top["distance_m"], top["start_ts"]
         longest_by_mode[mode] = {
             "distance_m": distance_m,
             "start_name": (before_row.name or before_row.city or before_row.country) if before_row else None,
