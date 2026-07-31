@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.country_names import country_name_en
 from app.db import db_dependency, get_setting
-from app.models import Place, Trip, TripSegment, Visit
+from app.models import LocationPoint, Place, Trip, TripSegment, Visit
 
 router = APIRouter()
 
@@ -508,6 +508,154 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         .first()
     )
 
+    # ---- The "fun ones" - genuinely playful, still grounded in real data ----
+
+    # Highest point reached - real recorded GPS altitude, not derived from
+    # anything else. LocationPoint.alt is only ever populated for
+    # source="owntracks" pings with a device that actually reported one
+    # (not every phone/app session does), so this silently has less
+    # coverage than most other records here - still worth surfacing when
+    # it exists rather than skipping it for being incomplete, same as
+    # every other "best available data" record in this endpoint.
+    highest_point_row = (
+        session.query(LocationPoint.alt, LocationPoint.tst)
+        .filter(LocationPoint.alt.isnot(None))
+        .order_by(LocationPoint.alt.desc())
+        .first()
+    )
+    highest_point = None
+    if highest_point_row:
+        near = _nearest_place(Visit.start_ts <= highest_point_row.tst, Visit.start_ts.desc()) or _nearest_place(
+            Visit.start_ts >= highest_point_row.tst, Visit.start_ts.asc()
+        )
+        highest_point = {
+            "altitude_m": highest_point_row.alt,
+            "place_name": near.name if near else None,
+            "city": near.city if near else None,
+            "day": datetime.fromtimestamp(highest_point_row.tst, tz=timezone.utc).strftime("%Y-%m-%d"),
+        }
+
+    # Fastest average speed across any single journey leg - distance/
+    # duration computed in SQL and sorted directly, not LocationPoint.vel
+    # (OwnTracks' own reported instantaneous speed): live inspection found
+    # vel capped at exactly 40.0 across the whole dataset, a suspiciously
+    # round ceiling that reads as a device/import artifact rather than a
+    # real top speed, so it's not trustworthy for a headline number the way
+    # the already-proven distance_m/duration_s pairing is. >=60s duration
+    # only - a few seconds' worth of GPS jitter can imply an absurd speed
+    # over a genuinely tiny real distance.
+    FASTEST_MIN_DURATION_S = 60
+    speed_expr = TripSegment.distance_m / TripSegment.duration_s
+    fastest_row = (
+        session.query(TripSegment.mode, TripSegment.distance_m, TripSegment.duration_s, TripSegment.start_ts)
+        .filter(TripSegment.duration_s >= FASTEST_MIN_DURATION_S)
+        .order_by(speed_expr.desc())
+        .first()
+    )
+    fastest_journey = None
+    if fastest_row:
+        kmh = (fastest_row.distance_m / 1000) / (fastest_row.duration_s / 3600)
+        fastest_journey = {
+            "mode": fastest_row.mode,
+            "kmh": round(kmh),
+            "day": datetime.fromtimestamp(fastest_row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+        }
+
+    # McDonald's world tour - confirmed live this dataset has 34 distinct
+    # branches across 231 visits, easily the most-represented chain by a
+    # wide margin (Costa/KFC/Greggs/Starbucks/Subway all in single figures)
+    # - genuinely the one "wild" record worth a dedicated card rather than
+    # a generic "favourite chain" abstraction that would need guessing at
+    # which chains matter without knowing the real distribution first.
+    mcdonalds_count = session.query(func.count(func.distinct(Place.id))).filter(Place.name.ilike("%mcdonald%")).scalar() or 0
+    mcdonalds_visits = (
+        session.query(func.count(Visit.id)).join(Place, Visit.place_id == Place.id).filter(Place.name.ilike("%mcdonald%")).scalar()
+        or 0
+    )
+    mcdonalds_tour = {"count": mcdonalds_count, "visit_count": mcdonalds_visits} if mcdonalds_count else None
+
+    # Total time spent at airports - reuses category_duration (already
+    # computed above for favourite_category) rather than a fresh query,
+    # "dead time waiting to fly" framing rather than a neutral one.
+    airport_time_s = category_duration.get("Airports", 0)
+    airport_time = {"duration_s": airport_time_s} if airport_time_s else None
+
+    # Longest single stay away from home - Home/Work excluded outright,
+    # or this is trivially just "asleep in bed" every time (the single
+    # longest Visit in a personal dataset is overwhelmingly likely to be
+    # an overnight-plus stretch at home otherwise).
+    longest_stay_row = (
+        session.query(Visit.start_ts, Visit.end_ts, Place.name, Place.city)
+        .join(Place, Visit.place_id == Place.id)
+        .filter(Place.category.notin_(["Home", "Work"]))
+        .order_by((Visit.end_ts - Visit.start_ts).desc())
+        .first()
+    )
+    longest_stay = (
+        {
+            "place_name": longest_stay_row.name,
+            "city": longest_stay_row.city,
+            "duration_s": longest_stay_row.end_ts - longest_stay_row.start_ts,
+            "day": datetime.fromtimestamp(longest_stay_row.start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+        }
+        if longest_stay_row
+        else None
+    )
+
+    # Latest night-owl visit - rotates clock minutes so anything after
+    # midnight (00:00-11:59) ranks *later* than the evening before it, or a
+    # 01:00 start would lose to an 11pm one despite obviously being the
+    # later night. Same UTC-clock-time convention every other date/time
+    # grouping in this endpoint already uses (busiest_day, busiest_month
+    # etc. all group by strftime(...,'unixepoch'), not a per-user local
+    # timezone - there's no stored timezone to convert against). Loads
+    # just the one start_ts column across every visit (personal-device
+    # scale, same reasoning already used for farthest_place's plain
+    # Python max()) rather than trying to express the rotation in SQL.
+    all_visit_starts = [row[0] for row in session.query(Visit.start_ts).all()]
+
+    def _night_rank(ts: int) -> int:
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        minutes = dt.hour * 60 + dt.minute
+        return minutes if minutes >= 12 * 60 else minutes + 24 * 60
+
+    night_owl = None
+    if all_visit_starts:
+        night_owl_ts = max(all_visit_starts, key=_night_rank)
+        v = (
+            session.query(Place.name, Place.city)
+            .join(Visit, Visit.place_id == Place.id)
+            .filter(Visit.start_ts == night_owl_ts)
+            .first()
+        )
+        dt = datetime.fromtimestamp(night_owl_ts, tz=timezone.utc)
+        night_owl = {
+            "place_name": v.name if v else None,
+            "city": v.city if v else None,
+            "time": dt.strftime("%H:%M"),
+            "day": dt.strftime("%Y-%m-%d"),
+        }
+
+    # Longest day out - biggest span between a day's first and last visit
+    # *start* time (not end time - a visit spanning past midnight would
+    # otherwise inflate this with time that's really the next calendar
+    # day's, the same class of bug already fixed elsewhere for midnight-
+    # crossing display). >1 visit only, or every single-visit day
+    # trivially "spans" zero.
+    day_span_expr = func.strftime("%Y-%m-%d", Visit.start_ts, "unixepoch")
+    longest_day_row = (
+        session.query(day_span_expr.label("day"), func.min(Visit.start_ts).label("first_ts"), func.max(Visit.start_ts).label("last_ts"))
+        .group_by("day")
+        .having(func.count(Visit.id) > 1)
+        .order_by((func.max(Visit.start_ts) - func.min(Visit.start_ts)).desc())
+        .first()
+    )
+    longest_day_out = (
+        {"day": longest_day_row.day, "duration_s": longest_day_row.last_ts - longest_day_row.first_ts}
+        if longest_day_row
+        else None
+    )
+
     return {
         "total_visits": total_visits,
         "total_distance_m": total_distance_m,
@@ -598,6 +746,13 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         "busiest_month": (
             {"month": busiest_month_row.month, "visit_count": busiest_month_row.cnt} if busiest_month_row else None
         ),
+        "highest_point": highest_point,
+        "fastest_journey": fastest_journey,
+        "mcdonalds_tour": mcdonalds_tour,
+        "airport_time": airport_time,
+        "longest_stay": longest_stay,
+        "night_owl": night_owl,
+        "longest_day_out": longest_day_out,
     }
 
 

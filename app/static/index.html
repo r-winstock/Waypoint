@@ -985,6 +985,78 @@
                   <div class="detail" x-text="insightsHighlights.busiest_month.visit_count + ' visits'"></div>
                 </div>
               </template>
+              <template x-if="insightsHighlights.highest_point">
+                <div class="stat-tile record-card clickable" @click="switchTab('day'); goToDate(insightsHighlights.highest_point.day)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-parks)"><span>🏔️</span></div>
+                    <div class="label">Highest point reached</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="Math.round(insightsHighlights.highest_point.altitude_m) + ' m'"></div>
+                  <div class="detail" x-text="(insightsHighlights.highest_point.place_name || formatDayString(insightsHighlights.highest_point.day)) + (insightsHighlights.highest_point.city ? ' · ' + insightsHighlights.highest_point.city : '')"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.fastest_journey">
+                <div class="stat-tile record-card clickable" @click="switchTab('day'); goToDate(insightsHighlights.fastest_journey.day)">
+                  <div class="record-card-head">
+                    <div class="record-icon" :style="`background: var(--wp-mode-${insightsHighlights.fastest_journey.mode})`">
+                      <i :data-lucide="modeIcon(insightsHighlights.fastest_journey.mode)" class="w-3.5 h-3.5" style="color: #fff"></i>
+                    </div>
+                    <div class="label">Fastest average speed</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.fastest_journey.kmh + ' km/h'"></div>
+                  <div class="detail" x-text="'On a ' + modeLabel(insightsHighlights.fastest_journey.mode) + ', ' + formatDayString(insightsHighlights.fastest_journey.day)"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.mcdonalds_tour">
+                <div class="stat-tile record-card">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-food)"><span>🍟</span></div>
+                    <div class="label">McDonald's world tour</div>
+                  </div>
+                  <div class="value tabular" x-text="insightsHighlights.mcdonalds_tour.count"></div>
+                  <div class="detail" x-text="'branches visited, ' + insightsHighlights.mcdonalds_tour.visit_count + ' times in total'"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.airport_time">
+                <div class="stat-tile record-card">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-airports)"><span>⏳</span></div>
+                    <div class="label">Time spent at airports</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="formatDuration(insightsHighlights.airport_time.duration_s)"></div>
+                  <div class="detail">All-time, waiting to fly</div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.longest_stay">
+                <div class="stat-tile record-card clickable" @click="switchTab('day'); goToDate(insightsHighlights.longest_stay.day)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-mode-driving)"><span>🛌</span></div>
+                    <div class="label">Longest single stay</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="formatDuration(insightsHighlights.longest_stay.duration_s)"></div>
+                  <div class="detail" x-text="(insightsHighlights.longest_stay.place_name || 'Unnamed place') + (insightsHighlights.longest_stay.city ? ' · ' + insightsHighlights.longest_stay.city : '')"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.night_owl">
+                <div class="stat-tile record-card clickable" @click="switchTab('day'); goToDate(insightsHighlights.night_owl.day)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-mode-flying)"><span>🦉</span></div>
+                    <div class="label">Latest night owl visit</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="insightsHighlights.night_owl.time"></div>
+                  <div class="detail" x-text="(insightsHighlights.night_owl.place_name || 'Unnamed place') + (insightsHighlights.night_owl.city ? ' · ' + insightsHighlights.night_owl.city : '') + ' · ' + formatDayString(insightsHighlights.night_owl.day)"></div>
+                </div>
+              </template>
+              <template x-if="insightsHighlights.longest_day_out">
+                <div class="stat-tile record-card clickable" @click="switchTab('day'); goToDate(insightsHighlights.longest_day_out.day)">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-culture)"><span>🎡</span></div>
+                    <div class="label">Longest day out</div>
+                  </div>
+                  <div class="value" style="font-size: 18px" x-text="formatDuration(insightsHighlights.longest_day_out.duration_s)"></div>
+                  <div class="detail" x-text="'Packed into ' + formatDayString(insightsHighlights.longest_day_out.day)"></div>
+                </div>
+              </template>
             </div>
 
             <template x-if="insightsHighlights.longest_by_mode && Object.keys(insightsHighlights.longest_by_mode).length">
