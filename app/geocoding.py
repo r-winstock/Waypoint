@@ -475,21 +475,36 @@ def _reverse_geocode(lat: float, lon: float, language: str | None = "en") -> dic
     backfill script re-resolving already-cached places, which passes the
     English request explicitly and diffs the result against what's already
     stored (the local form) rather than needing a second call here."""
-    _throttle()
     headers = {"User-Agent": USER_AGENT}
     if language:
         headers["Accept-Language"] = language
-    try:
-        resp = httpx.get(
-            NOMINATIM_URL,
-            params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 18, "addressdetails": 1},
-            headers=headers,
-            timeout=10.0,
-        )
-        resp.raise_for_status()
-        return resp.json()
-    except (httpx.HTTPError, ValueError):
-        return None
+    # One retry after a transient failure (timeout, 429, 5xx, bad JSON) -
+    # resolve_place() has no way to tell "Nominatim hiccuped" apart from
+    # "genuinely nothing here" once this returns None, and permanently saves
+    # a Place row with no city/country either way. Confirmed live this was
+    # the real cause of 463 places missing city/country entirely: the
+    # historical Google Timeline import ran through thousands of brand-new
+    # coordinates continuously for hours, where a transient failure here and
+    # there was inevitable. A single retry doesn't eliminate that risk, but
+    # meaningfully reduces it for the live pipeline going forward - the same
+    # "don't cache a transient failure as final" principle already applied
+    # to the Wikipedia image cache (see app/images.py).
+    for attempt in range(2):
+        _throttle()
+        try:
+            resp = httpx.get(
+                NOMINATIM_URL,
+                params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 18, "addressdetails": 1},
+                headers=headers,
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.HTTPError, ValueError):
+            if attempt == 0:
+                time.sleep(1.0)
+                continue
+            return None
 
 
 def search_places(query: str, near_lat: float | None = None, near_lon: float | None = None, limit: int = 8) -> list[dict]:
