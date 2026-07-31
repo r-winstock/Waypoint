@@ -373,15 +373,21 @@ h1, h2, h3, .display {
 /* Activity heatmap (GitHub-contributions style) - a week per column, a
    weekday per row, coloured by the accent colour at an opacity scaled to
    that day's visit count relative to the year's own busiest day. */
+/* Each week is a flex-1 column, so the whole year's worth of columns
+   stretches to fill however wide the page actually is instead of sitting
+   pinned to a fixed 11px left-aligned block with empty space to the right -
+   confirmed live on a wide desktop viewport. min-width on the week/month-
+   label columns keeps a legible floor on narrow screens, where
+   .heatmap-scroll's own overflow-x still takes over exactly as before. */
 .heatmap-scroll { overflow-x: auto; padding-bottom: 4px; }
-.heatmap-grid { display: flex; gap: 3px; }
-.heatmap-week { display: flex; flex-direction: column; gap: 3px; }
-.heatmap-cell { width: 11px; height: 11px; border-radius: 2px; background: var(--wp-surface-2); }
+.heatmap-grid { display: flex; gap: 3px; width: 100%; }
+.heatmap-week { display: flex; flex-direction: column; gap: 3px; flex: 1 1 0; min-width: 8px; }
+.heatmap-cell { width: 100%; aspect-ratio: 1; border-radius: 2px; background: var(--wp-surface-2); }
 .heatmap-cell.empty-slot { visibility: hidden; }
 .heatmap-cell.clickable { cursor: pointer; }
 .heatmap-cell.clickable:hover { outline: 1px solid var(--wp-fg-muted); outline-offset: 1px; }
-.heatmap-months { display: flex; gap: 3px; }
-.heatmap-month-label { width: 11px; font-size: 10px; color: var(--wp-fg-muted); overflow: visible; white-space: nowrap; }
+.heatmap-months { display: flex; gap: 3px; width: 100%; }
+.heatmap-month-label { flex: 1 1 0; min-width: 8px; font-size: 10px; color: var(--wp-fg-muted); overflow: visible; white-space: nowrap; }
 .heatmap-weekday-labels, .heatmap-weekday-labels-spacer { display: flex; flex-direction: column; gap: 3px; width: 28px; flex-shrink: 0; }
 .heatmap-weekday-label { height: 11px; font-size: 10px; line-height: 11px; color: var(--wp-fg-muted); }
 

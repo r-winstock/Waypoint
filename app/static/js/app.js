@@ -710,6 +710,31 @@ function waypoint() {
       const [y, m, d] = dayStr.split('-').map(Number);
       return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
     },
+    formatMonthString(monthStr) {
+      const [y, m] = monthStr.split('-').map(Number);
+      return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    },
+    // "Longest journey by mode" card labels - MODE_ICONS' own noun form
+    // reads fine as a tab label ("Train") but not as "Longest Train" (no
+    // article, wrong part of speech for a couple of them) - this is the
+    // "Longest walk"/"Longest train journey" phrasing per mode instead.
+    modeLabel(mode) {
+      const labels = {
+        walking: 'walk', cycling: 'cycle ride', driving: 'drive', taxi: 'taxi ride', bus: 'bus journey',
+        train: 'train journey', subway: 'subway ride', tram: 'tram ride', ferry: 'ferry crossing',
+        boating: 'boat trip', flying: 'flight',
+      };
+      return labels[mode] || (mode + ' journey');
+    },
+    // Records' per-mode grid, ordered to match MODE_ICONS (walking first,
+    // flying last, same convention TRAVEL_MODE_ORDER already uses server-
+    // side for Breakdown) rather than however Object.entries happens to
+    // return the backend's own dict.
+    orderedModeEntries(modesObj) {
+      return Object.keys(MODE_ICONS)
+        .filter((mode) => modesObj[mode])
+        .map((mode) => ({ mode, data: modesObj[mode] }));
+    },
     // Earth's mean circumference, 40,075 km - a fun/narrative comparison for
     // the Overview subtab's total-distance stat, computed client-side since
     // it's a pure display transform of a value the backend already returns.

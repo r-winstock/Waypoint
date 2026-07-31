@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import calendar
-from collections import defaultdict
+import json
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from math import atan2, cos, radians, sin, sqrt
 
@@ -297,6 +298,216 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
             "day": datetime.fromtimestamp(longest_start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
         }
 
+    # Longest journey *per mode* - "longest walk", "longest train journey"
+    # etc, not just one overall headline. Only "flying" gets the headline's
+    # own real-haversine re-ranking treatment (walk every top candidate,
+    # keep whichever resolvable one has the largest *real* distance) -
+    # that exists specifically to catch one documented failure mode, a
+    # long-haul flight whose stored distance_m was ~3x its true endpoint-
+    # to-endpoint distance (see the headline computation's own comment).
+    # Every other mode trusts its single top segment's stored distance_m
+    # outright instead of re-ranking - confirmed live this matters, not
+    # just theoretical: applying the flying-style re-ranking to "walking"
+    # picked out a nonsensical 5,497km "walk", because for a short, frequent
+    # mode the *largest real distance among resolvable candidates* is far
+    # more likely to be a case where the nearest-visit-in-time genuinely
+    # sits nowhere near the actual walk (a data gap either side of it) than
+    # a real long walk - exactly the kind of confidently-wrong number this
+    # whole approach exists to avoid, just from the opposite direction.
+    # Short/local segment distances come from straightforward GPS haversine
+    # in the OwnTracks pipeline (or well-bounded short Google segments) and
+    # don't carry flying's own known bad-data risk, so the plain stored
+    # figure is the trustworthy one for them. Only ever includes a mode
+    # that actually has at least one segment - same "dynamic, not a
+    # hardcoded list" convention as TRAVEL_MODE_ORDER above.
+    FLYING_CANDIDATES = 20
+    longest_by_mode: dict[str, dict] = {}
+    modes_present = [row[0] for row in session.query(TripSegment.mode).distinct().all()]
+    for mode in modes_present:
+        if mode == "flying":
+            # Deterministic tie-break (id, not just distance_m) - several
+            # segments can share the exact same stored distance (duplicate/
+            # near-duplicate rows from import), and SQLite doesn't
+            # guarantee a stable order among ties on a bare ORDER BY
+            # distance_m otherwise.
+            candidates = (
+                session.query(TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
+                .filter(TripSegment.mode == mode)
+                .order_by(TripSegment.distance_m.desc(), TripSegment.id)
+                .limit(FLYING_CANDIDATES)
+                .all()
+            )
+            resolved = None  # (real_distance_m, start_ts, before_row, after_row)
+            for cand in candidates:
+                before_row = _nearest_place(Visit.end_ts <= cand.start_ts, Visit.end_ts.desc())
+                after_row = _nearest_place(Visit.start_ts >= cand.end_ts, Visit.start_ts.asc())
+                if not before_row or not after_row:
+                    continue
+                real_distance = _haversine_m(before_row.lat_round, before_row.lon_round, after_row.lat_round, after_row.lon_round)
+                # A resolvable endpoint can still be an unnamed geocoded stub
+                # (a row exists, but name/city/country are all null) - not a
+                # sign of a bad match, so this still has to check every
+                # candidate rather than stopping at the first one that merely
+                # *resolves*, or it can settle for a smaller real distance
+                # than a later, properly-named candidate actually has.
+                if resolved is None or real_distance > resolved[0]:
+                    resolved = (real_distance, cand.start_ts, before_row, after_row)
+            if resolved is None:
+                continue
+            distance_m, start_ts, before_row, after_row = resolved
+        else:
+            top = (
+                session.query(TripSegment.distance_m, TripSegment.start_ts, TripSegment.end_ts)
+                .filter(TripSegment.mode == mode)
+                .order_by(TripSegment.distance_m.desc())
+                .first()
+            )
+            if top is None:
+                continue
+            before_row = _nearest_place(Visit.end_ts <= top.start_ts, Visit.end_ts.desc())
+            after_row = _nearest_place(Visit.start_ts >= top.end_ts, Visit.start_ts.asc())
+            distance_m, start_ts = top.distance_m, top.start_ts
+        longest_by_mode[mode] = {
+            "distance_m": distance_m,
+            "start_name": (before_row.name or before_row.city or before_row.country) if before_row else None,
+            "end_name": (after_row.name or after_row.city or after_row.country) if after_row else None,
+            "day": datetime.fromtimestamp(start_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+        }
+
+    # Shortest trip - the other end of "longest trip" (min duration, not min
+    # distance - a trip has no single "distance" of its own). >0 days only:
+    # a same-day blip that still cleared TRIP_MIN_DURATION_S is a real trip,
+    # but "0 days" would read as a bug, not a record.
+    shortest_trip_row = (
+        session.query(Trip.id, Trip.name, Trip.primary_city, Trip.primary_country, Trip.start_ts, Trip.end_ts)
+        .filter(Trip.end_ts - Trip.start_ts >= 86400)
+        .order_by((Trip.end_ts - Trip.start_ts).asc())
+        .first()
+    )
+
+    # Most countries visited within one single trip - a genuine multi-
+    # country tour reads differently from "went to France for a week", and
+    # nothing else in Records surfaces that. Computed in Python over each
+    # trip's own visits (personal-device scale: hundreds of trips, not
+    # thousands) rather than a grouped SQL query, since it needs a per-trip
+    # distinct-country count, not a global one.
+    most_countries_trip = None
+    best_country_count = 1  # only worth a record at 2+ countries
+    for trip in session.query(Trip).all():
+        codes = {v.place.country_code for v in trip.visits if v.place and v.place.country_code}
+        if len(codes) > best_country_count:
+            best_country_count = len(codes)
+            most_countries_trip = {
+                "trip_id": trip.id,
+                "name": trip.name,
+                "primary_city": trip.primary_city,
+                "primary_country": trip.primary_country,
+                "country_count": len(codes),
+            }
+
+    # "Favourite" category - most total *time* spent, not most visits (a
+    # dozen 5-minute shop visits shouldn't outrank fewer but much longer
+    # restaurant/hotel stays) - same measure _visit_totals already uses for
+    # the monthly Breakdown bars, just summed across all history instead of
+    # one month.
+    category_duration: Counter[str] = Counter()
+    for category, v_start, v_end in session.query(Place.category, Visit.start_ts, Visit.end_ts).join(
+        Place, Visit.place_id == Place.id
+    ):
+        category_duration[category] += max(v_end - v_start, 0)
+    favourite_category = None
+    if category_duration:
+        top_category, top_seconds = category_duration.most_common(1)[0]
+        favourite_category = {"category": top_category, "duration_s": top_seconds}
+
+    # Most-visited place *within* one specific category - "most-visited
+    # train station" and "most-visited airport" are the two that read as
+    # genuine records rather than trivia (everyone has a "usual" station or
+    # airport; "most-visited shop" is just whichever supermarket is
+    # nearest home, less interesting). Shares openPlaceRecord's own
+    # category+place_id navigation on the frontend, so no new click-through
+    # plumbing needed.
+    def _most_visited_in_category(category: str) -> dict | None:
+        row = (
+            session.query(Place.id, Place.name, Place.city, func.count(Visit.id).label("cnt"))
+            .join(Visit, Visit.place_id == Place.id)
+            .filter(Place.category == category, Place.name.isnot(None))
+            .group_by(Place.id)
+            .order_by(func.count(Visit.id).desc())
+            .first()
+        )
+        if row is None:
+            return None
+        return {"place_id": row.id, "name": row.name, "city": row.city, "category": category, "visit_count": row.cnt}
+
+    most_visited_station = _most_visited_in_category("Transport")
+    most_visited_airport = _most_visited_in_category("Airports")
+
+    # The place most recently added to the map for the very first time -
+    # "what's the newest place you've discovered", not "what have you seen
+    # most recently" (that's just whatever's on today's Day view). Grouped
+    # by place, taking each place's own *first* visit, then picking whichever
+    # of those first-visit dates is itself the most recent.
+    newest_place_row = (
+        session.query(Place.id, Place.name, Place.city, Place.category, func.min(Visit.start_ts).label("first_seen"))
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.name.isnot(None))
+        .group_by(Place.id)
+        .order_by(func.min(Visit.start_ts).desc())
+        .first()
+    )
+    newest_place = (
+        {
+            "place_id": newest_place_row.id,
+            "name": newest_place_row.name,
+            "city": newest_place_row.city,
+            "category": newest_place_row.category,
+            "day": datetime.fromtimestamp(newest_place_row.first_seen, tz=timezone.utc).strftime("%Y-%m-%d"),
+        }
+        if newest_place_row
+        else None
+    )
+
+    # UK county coverage - "county" only exists inside a UK place's own
+    # cached Nominatim response (raw_json), never as an indexed column (see
+    # Place's own fields), so this reads it back out of that JSON blob
+    # rather than needing a schema change just for two Records cards.
+    # Places resolved via Google Places alone (no Nominatim address block -
+    # see app/google_places.py's Essentials-tier field mask) have no
+    # raw_json at all and are silently skipped, same as anywhere else in
+    # this app that treats missing address data as "unknown", not "none".
+    county_visits: Counter[str] = Counter()
+    for place, visit_count in (
+        session.query(Place, func.count(Visit.id))
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.country_code == "GB", Place.raw_json.isnot(None))
+        .group_by(Place.id)
+        .all()
+    ):
+        try:
+            county = json.loads(place.raw_json).get("address", {}).get("county")
+        except (ValueError, AttributeError):
+            county = None
+        if county:
+            county_visits[county] += visit_count
+    total_counties = len(county_visits)
+    least_visited_county = None
+    if county_visits:
+        county, cnt = min(county_visits.items(), key=lambda kv: kv[1])
+        least_visited_county = {"county": county, "visit_count": cnt}
+
+    # Busiest calendar month ever, by visit count - the day-level version
+    # ("busiest day ever") already exists; this is the same idea one level
+    # zoomed out, and (unlike that one) isn't already covered by the Trends
+    # subtab's own yearly/seasonal charts.
+    month_expr = func.strftime("%Y-%m", Visit.start_ts, "unixepoch")
+    busiest_month_row = (
+        session.query(month_expr.label("month"), func.count(Visit.id).label("cnt"))
+        .group_by("month")
+        .order_by(func.count(Visit.id).desc())
+        .first()
+    )
+
     return {
         "total_visits": total_visits,
         "total_distance_m": total_distance_m,
@@ -365,6 +576,28 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         ),
         "farthest_place": farthest_place,
         "longest_journey": longest_journey,
+        "longest_by_mode": longest_by_mode,
+        "shortest_trip": (
+            {
+                "trip_id": shortest_trip_row.id,
+                "name": shortest_trip_row.name,
+                "primary_city": shortest_trip_row.primary_city,
+                "primary_country": shortest_trip_row.primary_country,
+                "days": round((shortest_trip_row.end_ts - shortest_trip_row.start_ts) / 86400),
+            }
+            if shortest_trip_row
+            else None
+        ),
+        "most_countries_trip": most_countries_trip,
+        "favourite_category": favourite_category,
+        "most_visited_station": most_visited_station,
+        "most_visited_airport": most_visited_airport,
+        "newest_place": newest_place,
+        "total_counties": total_counties,
+        "least_visited_county": least_visited_county,
+        "busiest_month": (
+            {"month": busiest_month_row.month, "visit_count": busiest_month_row.cnt} if busiest_month_row else None
+        ),
     }
 
 
