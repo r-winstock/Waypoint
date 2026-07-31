@@ -257,6 +257,22 @@ def _geocode_visits(session: Session) -> None:
 
 
 def _rebuild_trips(session: Session) -> None:
+    # A manually-corrected trip (see PUT /api/trips/{id}) is about to be
+    # deleted along with every other source="computed" row below - snapshot
+    # it first, keyed by (start_ts, end_ts), so _flush_trip_run can restore
+    # the correction onto whichever freshly-created trip covers the same
+    # date range. Confirmed live: a trip renamed via the picker reverted
+    # within minutes, because nothing preserved the correction across the
+    # very next rebuild (triggered by every incoming batch of OwnTracks
+    # points - i.e. constantly, for a live-tracked account). Boundaries are
+    # a safe match key here specifically because these are all *historical*
+    # trips; live tracking only ever appends new points at "now", it never
+    # retroactively rewrites a past trip's own start/end.
+    corrections = {
+        (t.start_ts, t.end_ts): (t.name, t.primary_city, t.primary_country, t.primary_country_code)
+        for t in session.query(Trip).filter(Trip.source == "computed", Trip.manually_corrected.is_(True)).all()
+    }
+
     # Only ever touches source="computed" trips - kml_import trips get their
     # boundaries directly from the source file's own folder structure (see
     # scripts/import_travellerspoint_kml.py) and are never rebuilt here.
@@ -301,9 +317,9 @@ def _rebuild_trips(session: Session) -> None:
         if is_away:
             run.append(visit)
         else:
-            _flush_trip_run(session, run)
+            _flush_trip_run(session, run, corrections)
             run = []
-    _flush_trip_run(session, run)
+    _flush_trip_run(session, run, corrections)
 
 
 def _primary_city_country(visits: list[Visit]) -> tuple[str | None, str | None, str | None]:
@@ -327,7 +343,9 @@ def _primary_city_country(visits: list[Visit]) -> tuple[str | None, str | None, 
     return primary_city, country, country_code
 
 
-def _flush_trip_run(session: Session, run: list[Visit]) -> None:
+def _flush_trip_run(
+    session: Session, run: list[Visit], corrections: dict[tuple[int, int], tuple] | None = None
+) -> None:
     if not run:
         return
     # Below this, it's a routine local errand outside the home radius (a
@@ -338,8 +356,18 @@ def _flush_trip_run(session: Session, run: list[Visit]) -> None:
     if run[-1].end_ts - run[0].start_ts < TRIP_MIN_DURATION_S:
         return
 
-    trip = Trip(start_ts=run[0].start_ts, end_ts=run[-1].end_ts, source="computed")
-    trip.primary_city, trip.primary_country, trip.primary_country_code = _primary_city_country(run)
+    start_ts, end_ts = run[0].start_ts, run[-1].end_ts
+    trip = Trip(start_ts=start_ts, end_ts=end_ts, source="computed")
+
+    # A manually-corrected trip covering this exact date range (see
+    # _rebuild_trips' own snapshot) wins outright over the geometric
+    # best-guess below - that's the entire point of the correction.
+    saved = (corrections or {}).get((start_ts, end_ts))
+    if saved is not None:
+        trip.name, trip.primary_city, trip.primary_country, trip.primary_country_code = saved
+        trip.manually_corrected = True
+    else:
+        trip.primary_city, trip.primary_country, trip.primary_country_code = _primary_city_country(run)
 
     session.add(trip)
     session.flush()

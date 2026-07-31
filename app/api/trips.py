@@ -217,6 +217,12 @@ def correct_trip(trip_id: int, correction: TripCorrection, session: Session = De
     trip.primary_city = correction.primary_city
     trip.primary_country = correction.primary_country
     trip.primary_country_code = correction.primary_country_code.upper() if correction.primary_country_code else None
+    # A source="computed" trip is entirely deleted and recreated by every
+    # _rebuild_trips() pass - this flag is how that rebuild knows to carry
+    # this correction over onto the freshly-created replacement row (see
+    # its own comment) instead of silently discarding it. No-op for
+    # source="kml_import" trips, which _rebuild_trips never touches at all.
+    trip.manually_corrected = True
     session.commit()
     return {
         "id": trip.id,

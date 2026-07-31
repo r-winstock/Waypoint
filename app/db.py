@@ -46,6 +46,7 @@ _COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     },
     "trips": {
         "name": "VARCHAR(255)",
+        "manually_corrected": "BOOLEAN NOT NULL DEFAULT 0",
     },
 }
 

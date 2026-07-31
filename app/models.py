@@ -138,6 +138,16 @@ class Trip(Base):
     # heuristic - see scripts/import_travellerspoint_kml.py). _rebuild_trips
     # only ever deletes/recomputes source="computed" rows.
     source: Mapped[str] = mapped_column(String(16), default="computed")
+    # Set by PUT /api/trips/{id} (the "Wrong destination?" picker). A
+    # source="computed" trip is entirely deleted and recreated by every
+    # _rebuild_trips() pass (triggered by every new batch of incoming
+    # OwnTracks points - i.e. constantly, for a live-tracked account) - this
+    # flag is how that rebuild knows to carry a manual name/city/country
+    # correction over onto the freshly-created replacement row (matched by
+    # start_ts/end_ts, see _rebuild_trips) instead of silently discarding it.
+    # Confirmed live: a trip renamed via the picker reverted within minutes,
+    # since nothing preserved the correction across the very next rebuild.
+    manually_corrected: Mapped[bool] = mapped_column(default=False)
 
     visits: Mapped[list[Visit]] = relationship(back_populates="trip", order_by="Visit.start_ts")
 
