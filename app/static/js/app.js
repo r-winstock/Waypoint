@@ -1342,6 +1342,26 @@ function waypoint() {
     },
     async refreshCurrentTab() {
       if (this.tab === 'day') return this.loadDay();
+      // A Trip *detail* view has its own place-edit pencils on each timeline
+      // entry now - saving one there needs to refresh trips.detail itself,
+      // not just the overview list underneath it (which is all loadTrips()
+      // ever touched, confirmed live: a correction made from inside a trip
+      // silently didn't show up until leaving and reopening it). Re-fetches
+      // in place rather than calling openTrip() again, which would push a
+      // second "back" history entry on top of the one already there.
+      if (this.tab === 'trips' && this.trips.detail) {
+        try {
+          const res = await fetch(`/api/trips/${this.trips.detail.id}`);
+          this.trips.detail = await res.json();
+          this.$nextTick(() => this.renderTripDetailMap());
+        } catch (e) { console.error('Failed to refresh trip detail', e); }
+        // The correction may also affect the overview's grouping/photos -
+        // drop those caches so they refetch next time that list is shown,
+        // same as saveTripEdit already does for its own corrections.
+        this.trips.data = null;
+        this.trips.allDestinations = null;
+        return;
+      }
       if (this.tab === 'trips') return this.loadTrips();
       if (this.tab === 'places' && this.places.category) return this.openCategory(this.places.category);
       if (this.tab === 'places') return this.loadPlaces();

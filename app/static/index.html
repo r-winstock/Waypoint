@@ -443,6 +443,10 @@
                           <div class="flex items-center gap-2">
                             <div class="font-semibold" x-text="entry.place_name || 'Unnamed place'"></div>
                             <div class="text-xs" style="color: var(--wp-fg-muted)" x-show="entry.place_name_local" x-text="entry.place_name_local"></div>
+                            <button class="btn-icon" style="width: 24px; height: 24px" title="This place is wrong? Fix it"
+                                    @click="openPlaceEdit(entry.place_id, entry.place_name, entry.category, entry.city, null, null)">
+                              <i data-lucide="pencil" class="w-3 h-3"></i>
+                            </button>
                           </div>
                           <div class="text-sm" style="color: var(--wp-fg-muted)" x-text="[entry.city, formatTimeRange(entry.start_ts, entry.end_ts)].filter(Boolean).join(' · ')"></div>
                           <span class="pill mt-1" :class="'pill-cat-' + slugify(entry.category)" x-show="entry.category" x-text="entry.category"></span>
