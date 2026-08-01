@@ -28,6 +28,16 @@ WALK_MAX_KMH = 7.0
 CYCLE_MAX_KMH = 25.0
 FLY_MIN_KMH = 140.0
 
+# A real GPS fix reports single-digit-to-tens-of-metres accuracy; confirmed
+# live that OwnTracks occasionally falls back to cell/WiFi triangulation
+# (hundreds of metres of error) when it can't get a proper GPS lock, and
+# that a single one of these bad points next to a real one is enough to
+# imply a multi-hundred-km/h "jump" between them - misclassified as flying,
+# and drawn on the map as a wild spike off the real route. acc is nullable
+# (some sources never report it) - only an *explicit* value over this
+# threshold is treated as untrustworthy, not the absence of one.
+MAX_TRUSTED_ACCURACY_M = 100.0
+
 # Segments shorter than this are noise (GPS drift between two visits at
 # effectively the same spot) and are dropped rather than recorded.
 MIN_SEGMENT_DISTANCE_M = 20.0
@@ -101,7 +111,10 @@ def process_all(session: Session) -> None:
     points = [
         RawPoint(p.lat, p.lon, p.tst)
         for p in session.query(LocationPoint)
-        .filter(LocationPoint.source == "owntracks")
+        .filter(
+            LocationPoint.source == "owntracks",
+            (LocationPoint.acc.is_(None)) | (LocationPoint.acc <= MAX_TRUSTED_ACCURACY_M),
+        )
         .order_by(LocationPoint.tst)
         .all()
     ]

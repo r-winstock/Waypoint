@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db import db_dependency
 from app.models import LocationPoint, TripSegment, Visit
 from app.photoprism import attach_photos_to_visits, nearby_photos
-from app.processing import VISIT_MERGE_MAX_GAP_S
+from app.processing import MAX_TRUSTED_ACCURACY_M, VISIT_MERGE_MAX_GAP_S
 
 router = APIRouter()
 
@@ -72,7 +72,17 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
 
     points = (
         session.query(LocationPoint)
-        .filter(LocationPoint.tst >= start_ts, LocationPoint.tst < end_ts)
+        .filter(
+            LocationPoint.tst >= start_ts,
+            LocationPoint.tst < end_ts,
+            # Same accuracy floor as app/processing.py's own segment
+            # classification (see MAX_TRUSTED_ACCURACY_M there) - a
+            # cell/WiFi-triangulated fallback fix (confirmed live: several
+            # hundred metres of error, vs a real GPS fix's tens) doesn't
+            # just corrupt the mode classifier, it draws as a wild spike
+            # off the real route on this exact map.
+            (LocationPoint.acc.is_(None)) | (LocationPoint.acc <= MAX_TRUSTED_ACCURACY_M),
+        )
         .order_by(LocationPoint.tst)
         .all()
     )
