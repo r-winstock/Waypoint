@@ -20,11 +20,10 @@ engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread"
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 DEFAULT_SETTINGS = {
-    # Home location used to decide what counts as "away" for trip grouping.
-    # Unset (None) until the user configures it via /api/settings.
-    "home_lat": "",
-    "home_lon": "",
-    "home_radius_m": "500",
+    # Home location(s) live in the home_periods table now (see
+    # app/models.py's HomePeriod docstring for why a single fixed
+    # lat/lon - this dict's original home_lat/home_lon/home_radius_m -
+    # wasn't enough), managed via /api/settings/home-periods.
     "owntracks_username": "waypoint",
     "owntracks_password": "waypoint",
 }

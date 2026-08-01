@@ -160,6 +160,36 @@ class Trip(Base):
     visits: Mapped[list[Visit]] = relationship(back_populates="trip", order_by="Visit.start_ts")
 
 
+class HomePeriod(Base):
+    """A home address valid for a span of time - replaces a single fixed
+    home_lat/home_lon (the original design, kept as a bare Settings pair
+    until this) once it became clear a real personal history has more than
+    one: someone who's lived at two addresses since 2000 has every visit at
+    the *first* one wrongly judged "away from home" against the second
+    one's coordinates, since they're kilometres apart - exactly the bug
+    that would have silently corrupted trip detection for the whole pre-
+    move era once historical (pre-tracking) visits from photo EXIF/Takeout
+    metadata started getting imported for it.
+
+    start_ts/end_ts are both nullable - None on either end means "no known
+    bound that direction" (the earliest home on record, or the current
+    one, respectively). Periods are expected not to overlap, but nothing
+    enforces that; the lookup (see app/processing.py) just uses whichever
+    period contains a given timestamp, first match wins."""
+
+    __tablename__ = "home_periods"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    start_ts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_ts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lat: Mapped[float] = mapped_column(Float)
+    lon: Mapped[float] = mapped_column(Float)
+    radius_m: Mapped[float] = mapped_column(Float, default=500.0)
+    # Free-text label ("16 Preston Drive, Daventry") - purely informational,
+    # shown wherever home periods are listed; nothing else reads it.
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class Settings(Base):
     """Simple key/value store: home location, OwnTracks ingest credentials."""
 

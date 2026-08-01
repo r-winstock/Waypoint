@@ -7,9 +7,8 @@ import time
 import httpx
 from sqlalchemy.orm import Session
 
-from app.db import get_setting
 from app.google_places import resolve_new_place
-from app.models import Place, Visit
+from app.models import HomePeriod, Place, Visit
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
@@ -345,21 +344,22 @@ def create_or_reuse_place(
 
 
 def _tag_home(session: Session, place: Place, lat: float, lon: float) -> None:
-    """Auto-labels a place as "Home" when it falls within the configured
-    home radius - the same setting _rebuild_trips already uses to decide
-    what counts as "away", so the app already knows where home is. Only
-    overrides the generic "Other places" fallback, and never a place the
-    user has corrected themselves or that OSM tags already gave a more
-    specific category."""
+    """Auto-labels a place as "Home" when it falls within any configured
+    HomePeriod's radius - not time-scoped (unlike _rebuild_trips' own
+    away-check in app/processing.py, which needs the *right* period for a
+    given visit's timestamp): a Place is a coordinate cache shared across
+    however many visits it's ever had, potentially spanning several home
+    eras, so "was this ever a home address" is the right question here,
+    not "was it home at any one particular moment". Only overrides the
+    generic "Other places" fallback, and never a place the user has
+    corrected themselves or that OSM tags already gave a more specific
+    category."""
     if place.manually_corrected or place.category != "Other places":
         return
-    home_lat = get_setting(session, "home_lat", "")
-    home_lon = get_setting(session, "home_lon", "")
-    if not home_lat or not home_lon:
-        return
-    radius_m = float(get_setting(session, "home_radius_m", "500"))
-    if _haversine_m(lat, lon, float(home_lat), float(home_lon)) <= radius_m:
-        place.category = "Home"
+    for period in session.query(HomePeriod).all():
+        if _haversine_m(lat, lon, period.lat, period.lon) <= period.radius_m:
+            place.category = "Home"
+            return
 
 
 def _throttle() -> None:

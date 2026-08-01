@@ -102,10 +102,14 @@ On the phone, OwnTracks app settings:
 - Because sync is LAN-only by design, OwnTracks queues points while away and
   uploads the backlog once the phone rejoins home Wi-Fi.
 
-Then set the home location so trip-grouping works:
+Then add at least one home period so trip-grouping works (start_date/
+end_date are optional - omit start_date for "the earliest home on record",
+omit end_date for "current home"; add more than one if you've lived
+somewhere else since tracking/import data began, each with its own date
+range):
 ```bash
-curl -X PUT http://waypoint.home.lan/api/settings -H "Content-Type: application/json" \
-  -d '{"home_lat": <lat>, "home_lon": <lon>, "home_radius_m": 500}'
+curl -X POST http://waypoint.home.lan/api/settings/home-periods -H "Content-Type: application/json" \
+  -d '{"lat": <lat>, "lon": <lon>, "radius_m": 500, "start_date": "2012-07-27", "label": "Current home"}'
 ```
 
 ---

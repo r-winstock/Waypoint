@@ -7,9 +7,8 @@ from dataclasses import dataclass
 from sqlalchemy import delete, update
 from sqlalchemy.orm import Session
 
-from app.db import get_setting
 from app.geocoding import resolve_place
-from app.models import LocationPoint, Trip, TripSegment, Visit
+from app.models import HomePeriod, LocationPoint, Trip, TripSegment, Visit
 
 STAY_RADIUS_M = 150.0
 STAY_MIN_SECONDS = 8 * 60
@@ -291,35 +290,60 @@ def _rebuild_trips(session: Session) -> None:
     # Manchester's newly (re)assigned id.
     session.execute(update(Visit).where(Visit.source != "kml_import").values(trip_id=None))
 
-    home_lat = get_setting(session, "home_lat", "")
-    home_lon = get_setting(session, "home_lon", "")
-    if not home_lat or not home_lon:
-        return  # home location not configured yet - no trips without it
+    home_periods = session.query(HomePeriod).all()
+    if not home_periods:
+        return  # no home location(s) configured yet - no trips without one
 
-    home_lat_f, home_lon_f = float(home_lat), float(home_lon)
-    home_radius_m = float(get_setting(session, "home_radius_m", "500"))
-
-    # kml_import visits are excluded: they already belong to a trip assigned
-    # directly at import time, and mixing them into this gap/radius heuristic
-    # is exactly what merged two separate real trips 14 days apart into one
-    # nonsensical multi-week run (sparse waypoint-only data has no "at home"
-    # visits in between to break the run, unlike continuous tracking).
+    # kml_import and photo_import visits are excluded from the gap/radius
+    # heuristic below: they already stand alone (or, for kml_import, get
+    # their trip boundaries directly from the source file's own folder
+    # structure - see scripts/import_travellerspoint_kml.py), and mixing
+    # sparse standalone visits into this heuristic is exactly what merged
+    # two separate real trips into one nonsensical run before - confirmed
+    # live for photo_import specifically: a Longleat visit in 2002 and a
+    # Coniston one in 2003 merged into a single fabricated "trip" spanning
+    # 2002-2006, because there's no continuous "at home" visit data between
+    # them (unlike live tracking) to ever break the run. photo_import visits
+    # get their own trip each further down instead, one visit = one trip.
     visits = (
         session.query(Visit)
-        .filter(Visit.source != "kml_import")
+        .filter(Visit.source.notin_(["kml_import", "photo_import"]))
         .order_by(Visit.start_ts)
         .all()
     )
 
+    def _is_away(visit: Visit) -> bool:
+        # Unlike _tag_home (any period, ever), this needs the *one* period
+        # that actually covers this visit's own timestamp - the whole point
+        # of HomePeriod is that a visit near an old address should count as
+        # "at home" only while that was genuinely still home, not forever.
+        # A visit with no covering period at all (before the earliest known
+        # home, or in a gap between two) is treated as "not away" rather
+        # than guessed at - silently fabricating a trip out of a genuinely
+        # unknown-era visit is worse than just leaving it ungrouped.
+        for period in home_periods:
+            if (period.start_ts is None or visit.start_ts >= period.start_ts) and (
+                period.end_ts is None or visit.start_ts < period.end_ts
+            ):
+                return haversine_m(visit.lat, visit.lon, period.lat, period.lon) > period.radius_m
+        return False
+
     run: list[Visit] = []
     for visit in visits:
-        is_away = haversine_m(visit.lat, visit.lon, home_lat_f, home_lon_f) > home_radius_m
-        if is_away:
+        if _is_away(visit):
             run.append(visit)
         else:
             _flush_trip_run(session, run, corrections)
             run = []
     _flush_trip_run(session, run, corrections)
+
+    # photo_import visits: one visit = one trip, each flushed on its own
+    # rather than gap-grouped with any other visit (see the exclusion
+    # comment above) - still goes through the exact same _flush_trip_run
+    # (same TRIP_MIN_DURATION_S filter, same city/country/correction
+    # logic), just called once per visit instead of once per away-run.
+    for visit in session.query(Visit).filter(Visit.source == "photo_import").order_by(Visit.start_ts).all():
+        _flush_trip_run(session, [visit], corrections)
 
 
 def _primary_city_country(visits: list[Visit]) -> tuple[str | None, str | None, str | None]:
