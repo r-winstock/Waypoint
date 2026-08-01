@@ -228,6 +228,31 @@ function wpHasRawCoverage(points, startTs, endTs) {
   return points.some((p) => p.tst >= startTs && p.tst <= endTs);
 }
 
+// A gap this long between two consecutive raw points within an otherwise-
+// covered segment is a genuine dropout (phone backgrounded, signal lost),
+// not just normal reporting cadence - confirmed live: a 12-minute gap with
+// perfectly ordinary speed either side (so no speed-based check catches
+// it - distance and time both scale together) still isn't real recorded
+// coverage for that stretch, and was being drawn as part of the solid
+// "Recorded GPS path" line - a straight jump across open country - when it
+// should read as the dashed "Estimated route (no GPS log for that
+// stretch)" the legend already promises for exactly this case.
+const RAW_GAP_MAX_S = 180;
+
+// Splits a raw-point leg into contiguous runs wherever the gap between two
+// consecutive points exceeds RAW_GAP_MAX_S - each run gets its own solid
+// line, and the gaps between runs get a dashed connector (see
+// wpRenderDayMap), rather than one solid line blindly connecting every
+// point regardless of how long a real dropout sits between two of them.
+function wpSplitByGap(legPoints) {
+  const runs = [[legPoints[0]]];
+  for (let i = 1; i < legPoints.length; i++) {
+    if (legPoints[i].tst - legPoints[i - 1].tst > RAW_GAP_MAX_S) runs.push([]);
+    runs[runs.length - 1].push(legPoints[i]);
+  }
+  return runs;
+}
+
 function wpHaversineM([lat1, lon1], [lat2, lon2]) {
   const r = 6371000;
   const p1 = (lat1 * Math.PI) / 180;
@@ -314,9 +339,31 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
   for (const seg of segments) {
     const legPoints = points.filter((p) => p.tst >= seg.start_ts && p.tst <= seg.end_ts);
     if (legPoints.length < 2) continue;
-    const latlngs = legPoints.map((p) => [p.lat, p.lon]);
-    const line = wpAddLayer(map, wpCasedPolyline(latlngs, wpModeColor(seg.mode), { opacity: 0.9 }));
-    bounds.push(...latlngs);
+    const color = wpModeColor(seg.mode);
+
+    // A segment with raw coverage isn't necessarily *continuously*
+    // covered - split on any internal gap long enough to be a real
+    // dropout (see RAW_GAP_MAX_S), draw each real run solid, and bridge
+    // the gaps between runs with the same dashed "estimated" styling a
+    // segment with no raw coverage at all already gets below, rather than
+    // one solid line blindly connecting every point regardless of how
+    // long a dropout sits between two of them.
+    const runs = wpSplitByGap(legPoints);
+    const runLines = [];
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i];
+      const runLatlngs = run.map((p) => [p.lat, p.lon]);
+      bounds.push(...runLatlngs);
+      if (runLatlngs.length >= 2) runLines.push(wpAddLayer(map, wpCasedPolyline(runLatlngs, color, { opacity: 0.9 })));
+      if (i < runs.length - 1) {
+        const nextRun = runs[i + 1];
+        const bridge = [[run[run.length - 1].lat, run[run.length - 1].lon], [nextRun[0].lat, nextRun[0].lon]];
+        // Tracked in the same array as the solid runs - a successful snap
+        // upgrade below removes every line drawn for this segment, bridge
+        // included, replacing them all with the one new routed line.
+        runLines.push(wpAddLayer(map, wpCasedPolyline(bridge, color, { opacity: 0.7, dashArray: '6 6' })));
+      }
+    }
 
     // render_mode: "raw" skips any snap attempt outright (an honest
     // recorded trace, e.g. a genuinely off-road hike a road/rail snap
@@ -333,11 +380,12 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
     if (renderMode === 'raw') continue;
     if (renderMode === 'snap_rail') {
       const flanking = flankingVisits.get(seg);
-      if (flanking) toSnapRailFromRaw.push({ entry: seg, ...flanking, color: wpModeColor(seg.mode), line });
+      if (flanking) toSnapRailFromRaw.push({ entry: seg, ...flanking, color, lines: runLines });
       continue;
     }
     if (OSRM_PROFILES[seg.mode]) {
-      toSnapRoad.push({ mode: seg.mode, latlngs, color: wpModeColor(seg.mode), line });
+      const latlngs = legPoints.map((p) => [p.lat, p.lon]);
+      toSnapRoad.push({ mode: seg.mode, latlngs, color, lines: runLines });
     }
   }
 
@@ -451,12 +499,12 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
   // fixes (was previously only attempted for sparse historical replays;
   // wpFetchMatchedRoute's own comment covers why dense live-tracking data
   // needs this too).
-  toSnapRoad.forEach(async ({ mode, latlngs, color, line }) => {
+  toSnapRoad.forEach(async ({ mode, latlngs, color, lines }) => {
     const routed = await wpFetchMatchedRoute(mode, latlngs);
     if (renderToken !== _wpDayMapRenderToken) return;
     if (routed) {
-      map.removeLayer(line);
-      map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
+      lines.forEach((l) => map.removeLayer(l));
+      map._wpLayers = (map._wpLayers || []).filter((l) => !lines.includes(l));
       wpAddLayer(map, wpCasedPolyline(routed, color, { opacity: 0.9 }));
     }
   });
@@ -466,12 +514,12 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
   // app/routing.py, not built from the recorded points themselves), so the
   // result is a router's guess like the no-raw-coverage case above, hence
   // dashed rather than solid despite replacing an originally-solid line.
-  toSnapRailFromRaw.forEach(async ({ entry, prevVisit, nextVisit, color, line }) => {
+  toSnapRailFromRaw.forEach(async ({ entry, prevVisit, nextVisit, color, lines }) => {
     const routed = await wpFetchRailRoute(entry.id, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon);
     if (renderToken !== _wpDayMapRenderToken) return;
     if (routed) {
-      map.removeLayer(line);
-      map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
+      lines.forEach((l) => map.removeLayer(l));
+      map._wpLayers = (map._wpLayers || []).filter((l) => !lines.includes(l));
       wpAddLayer(map, wpCasedPolyline(routed, color, { dashArray: '4 8' }));
     }
   });
