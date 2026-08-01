@@ -56,7 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db import SessionLocal, init_db  # noqa: E402
 from app.geocoding import search_places  # noqa: E402
-from app.models import Visit  # noqa: E402
+from app.models import Trip, Visit  # noqa: E402
 from app.processing import _geocode_visits, _rebuild_trips, haversine_m  # noqa: E402
 
 # Category strings search_places() falls back to when Nominatim didn't
@@ -177,7 +177,24 @@ def _already_covered(session, cluster: Cluster) -> bool:
         .filter(Visit.end_ts >= cluster.start_ts, Visit.start_ts <= cluster.end_ts)
         .all()
     )
-    return any(haversine_m(v.lat, v.lon, cluster.lat, cluster.lon) <= DEDUPE_MAX_DIST_M for v in nearby)
+    if any(haversine_m(v.lat, v.lon, cluster.lat, cluster.lon) <= DEDUPE_MAX_DIST_M for v in nearby):
+        return True
+    # Distance-based dedup alone missed real duplicates confirmed live: a
+    # cluster's own centroid can sit well outside DEDUPE_MAX_DIST_M of any
+    # single kml_import visit (e.g. a brief connecting-flight stop hundreds
+    # of km from that trip's other stops) while still falling entirely
+    # within a trip already fully captured by that earlier import. Scoped
+    # to kml_import specifically, not every trip source: a kml_import
+    # trip's own visits are sparse waypoints (see app/processing.py's own
+    # reasoning for excluding it from the gap/radius heuristic), so it's
+    # the one source where a cluster can genuinely fall inside a real trip
+    # without ever landing near any single one of its recorded stops.
+    return (
+        session.query(Trip)
+        .filter(Trip.source == "kml_import", Trip.start_ts <= cluster.end_ts, Trip.end_ts >= cluster.start_ts)
+        .first()
+        is not None
+    )
 
 
 def _folders_needing_review(root: Path, geotagged_folders: set[str]) -> list[str]:

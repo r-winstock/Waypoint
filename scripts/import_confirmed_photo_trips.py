@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db import SessionLocal, init_db  # noqa: E402
 from app.geocoding import search_places  # noqa: E402
-from app.models import Visit  # noqa: E402
+from app.models import Trip, Visit  # noqa: E402
 from app.processing import _geocode_visits, _rebuild_trips  # noqa: E402
 
 # (search query, [(start_date, end_date), ...]) - search query is what gets
@@ -78,10 +78,30 @@ def _ts(d: str) -> int:
     return int(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
 
 
+def _overlapping_trip(session, start_ts: int, end_ts: int) -> Trip | None:
+    """Distance-based dedup (see import_google_photos.py's own version)
+    doesn't work for these entries: a country-level search point ("Canada",
+    "New Zealand") can be hundreds of km from where a real, already-
+    imported trip's actual visits sit, so a plain radius check never
+    catches the overlap. Confirmed live this was a real problem, not
+    theoretical: three of the first ten confirmed trips here (New Zealand,
+    Canada, Dominican Republic) turned out to already exist as proper,
+    better-detailed trips from an earlier Travellerspoint KML import, and
+    the distance check missed every one. A date-range overlap against
+    *any* existing trip, regardless of source or distance, is a much
+    blunter but far more reliable signal that this is the same real trip
+    already captured elsewhere."""
+    return (
+        session.query(Trip)
+        .filter(Trip.start_ts <= end_ts, Trip.end_ts >= start_ts)
+        .first()
+    )
+
+
 def run(apply: bool) -> None:
     init_db()
     session = SessionLocal()
-    created = 0
+    created = skipped = 0
     try:
         for query, date_ranges in GEOCODE_TRIPS:
             results = search_places(query)
@@ -91,33 +111,31 @@ def run(apply: bool) -> None:
             top = results[0]
             print(f"{query!r} -> {top['name']} ({top['lat']:.4f}, {top['lon']:.4f})")
             for start_date, end_date in date_ranges:
+                start_ts, end_ts = _ts(start_date), _ts(end_date) + 86399
+                existing = _overlapping_trip(session, start_ts, end_ts)
+                if existing is not None:
+                    print(f"  {start_date} - {end_date}  SKIPPED - overlaps existing trip {existing.id} ({existing.primary_city}, {existing.primary_country})")
+                    skipped += 1
+                    continue
                 print(f"  {start_date} - {end_date}")
                 if apply:
                     session.add(
-                        Visit(
-                            start_ts=_ts(start_date),
-                            end_ts=_ts(end_date) + 86399,  # inclusive of the end date
-                            lat=top["lat"],
-                            lon=top["lon"],
-                            point_count=1,
-                            source="photo_import",
-                        )
+                        Visit(start_ts=start_ts, end_ts=end_ts, lat=top["lat"], lon=top["lon"], point_count=1, source="photo_import")
                     )
                 created += 1
 
         print(f"\n'Summerhill Caravan Park, Narberth' -> given directly ({SUMMERHILL_LAT}, {SUMMERHILL_LON})")
         for start_date, end_date in SUMMERHILL_DATES:
+            start_ts, end_ts = _ts(start_date), _ts(end_date) + 86399
+            existing = _overlapping_trip(session, start_ts, end_ts)
+            if existing is not None:
+                print(f"  {start_date} - {end_date}  SKIPPED - overlaps existing trip {existing.id} ({existing.primary_city}, {existing.primary_country})")
+                skipped += 1
+                continue
             print(f"  {start_date} - {end_date}")
             if apply:
                 session.add(
-                    Visit(
-                        start_ts=_ts(start_date),
-                        end_ts=_ts(end_date) + 86399,
-                        lat=SUMMERHILL_LAT,
-                        lon=SUMMERHILL_LON,
-                        point_count=1,
-                        source="photo_import",
-                    )
+                    Visit(start_ts=start_ts, end_ts=end_ts, lat=SUMMERHILL_LAT, lon=SUMMERHILL_LON, point_count=1, source="photo_import")
                 )
             created += 1
 
@@ -134,7 +152,7 @@ def run(apply: bool) -> None:
     finally:
         session.close()
 
-    print(f"\nDone. {created} visits {'created' if apply else 'would be created'}.")
+    print(f"\nDone. {created} visits {'created' if apply else 'would be created'}, {skipped} skipped (already covered by an existing trip).")
 
 
 if __name__ == "__main__":

@@ -354,17 +354,29 @@ def _primary_city_country(visits: list[Visit]) -> tuple[str | None, str | None, 
     importer's direct per-folder trips."""
     city_duration: Counter[str] = Counter()
     city_country: dict[str, tuple[str | None, str | None]] = {}
+    country_duration: Counter[str] = Counter()
+    country_code_for: dict[str, str | None] = {}
     for visit in visits:
         duration = max(visit.end_ts - visit.start_ts, 60)
         if visit.place and visit.place.city:
             city_duration[visit.place.city] += duration
             city_country[visit.place.city] = (visit.place.country, visit.place.country_code)
+        elif visit.place and visit.place.country:
+            # A place resolved at country level (e.g. a broad "Canada" or
+            # "New Zealand" geocode, rather than a specific city/town) has
+            # no city to key on at all - falls back to a time-weighted mode
+            # *country* instead of leaving the trip with no name whatsoever.
+            country_duration[visit.place.country] += duration
+            country_code_for[visit.place.country] = visit.place.country_code
 
-    if not city_duration:
-        return None, None, None
-    primary_city = city_duration.most_common(1)[0][0]
-    country, country_code = city_country[primary_city]
-    return primary_city, country, country_code
+    if city_duration:
+        primary_city = city_duration.most_common(1)[0][0]
+        country, country_code = city_country[primary_city]
+        return primary_city, country, country_code
+    if country_duration:
+        country = country_duration.most_common(1)[0][0]
+        return None, country, country_code_for[country]
+    return None, None, None
 
 
 def _flush_trip_run(
