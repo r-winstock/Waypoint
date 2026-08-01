@@ -19,24 +19,41 @@ VALID_MODES = {
     "walking", "cycling", "driving", "taxi", "bus", "train", "subway", "tram", "ferry", "boating", "flying",
 }
 
+# Mirrors TripSegment.render_mode's docstring - "auto" is today's automatic
+# mode-based snapping, the other three are a per-segment manual override for
+# when that guessed wrong (snapped to the wrong network, or shouldn't have
+# snapped at all).
+VALID_RENDER_MODES = {"auto", "raw", "snap_road", "snap_rail"}
+
 
 class UpdateSegmentMode(BaseModel):
-    mode: str
+    mode: str | None = None
+    render_mode: str | None = None
 
 
 @router.patch("/api/events/segments/{segment_id}")
 def update_segment_mode(segment_id: int, body: UpdateSegmentMode, session: Session = Depends(db_dependency)):
     """Lets a segment be reclassified (e.g. speed-classified "driving" was
     actually a taxi) - GPS speed alone can't tell these apart, so this is
-    the only way to correct it once the visit either side is confirmed."""
-    if body.mode not in VALID_MODES:
+    the only way to correct it once the visit either side is confirmed.
+    Also doubles as the write path for render_mode (the Day map's per-
+    segment snap-to-road/rail/raw override) - both are single-field
+    corrections to the same row, no reason for two endpoints."""
+    if body.mode is None and body.render_mode is None:
+        raise HTTPException(status_code=400, detail="mode or render_mode required")
+    if body.mode is not None and body.mode not in VALID_MODES:
         raise HTTPException(status_code=400, detail=f"mode must be one of {sorted(VALID_MODES)}")
+    if body.render_mode is not None and body.render_mode not in VALID_RENDER_MODES:
+        raise HTTPException(status_code=400, detail=f"render_mode must be one of {sorted(VALID_RENDER_MODES)}")
     segment = session.get(TripSegment, segment_id)
     if segment is None:
         raise HTTPException(status_code=404, detail="Segment not found")
-    segment.mode = body.mode
+    if body.mode is not None:
+        segment.mode = body.mode
+    if body.render_mode is not None:
+        segment.render_mode = body.render_mode
     session.commit()
-    return {"id": segment.id, "mode": segment.mode}
+    return {"id": segment.id, "mode": segment.mode, "render_mode": segment.render_mode}
 
 
 @router.delete("/api/events/visits/{visit_id}")

@@ -1495,6 +1495,20 @@ function waypoint() {
         await this.loadDay();
       } catch (e) { console.error('Failed to update segment mode', e); }
     },
+    // Map-display override (see TripSegment.render_mode) - reverts an
+    // auto-snapped segment back to its raw recorded plot, or forces it onto
+    // the road/rail network the automatic guess picked the wrong one of.
+    async updateSegmentRenderMode(entry, renderMode) {
+      if (!renderMode || renderMode === (entry.render_mode || 'auto')) return;
+      try {
+        await fetch(`/api/events/segments/${entry.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ render_mode: renderMode }),
+        });
+        await this.loadDay();
+      } catch (e) { console.error('Failed to update segment render mode', e); }
+    },
     canMergeUp(entry) {
       const visitEntries = this.day.data.timeline.filter((e) => e.type === 'visit');
       return visitEntries.indexOf(entry) > 0;

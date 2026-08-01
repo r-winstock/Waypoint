@@ -157,6 +157,7 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
                 "mode": s.mode,
                 "distance_m": s.distance_m,
                 "duration_s": s.duration_s,
+                "render_mode": s.render_mode,
             }
         )
     timeline.sort(key=lambda e: e["start_ts"])

@@ -163,6 +163,7 @@ def get_trip_detail(trip_id: int, session: Session = Depends(db_dependency)):
             "mode": s.mode,
             "distance_m": s.distance_m,
             "duration_s": s.duration_s,
+            "render_mode": s.render_mode,
         }
         for s in segments
     ]

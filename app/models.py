@@ -104,6 +104,14 @@ class TripSegment(Base):
     duration_s: Mapped[float] = mapped_column(Float)
     # see Visit.source - same reasoning, same rebuild-safety requirement.
     source: Mapped[str] = mapped_column(String(16), default="owntracks", index=True)
+    # auto | raw | snap_road | snap_rail - manual override for the Day map's
+    # rendering of this one segment. "auto" (default) is today's automatic
+    # behaviour (mode-based road/rail snapping where applicable); the other
+    # three let a user correct a specific segment the automatic heuristic
+    # got wrong (snapped to the wrong network, or shouldn't have snapped at
+    # all - a genuinely off-road hike) without changing every other segment
+    # of the same mode.
+    render_mode: Mapped[str] = mapped_column(String(16), default="auto")
 
     start_visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"), nullable=True)
     end_visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id"), nullable=True)

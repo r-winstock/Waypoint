@@ -48,10 +48,18 @@ const WP_BASE_LAYERS = {
 };
 
 
+// The public demo server - self-hosting on rowan was tried and abandoned
+// (full-Europe osrm-extract needs more RAM than rowan can safely spare
+// alongside its other services, twice OOM-killing things, once system-
+// wide). The public server's own real limits, confirmed live by binary
+// search since neither is documented anywhere: Match caps at 10
+// coordinates per request, Route at 500 - see OSRM_MATCH_CHUNK_SIZE below.
+const OSRM_BASE_URL = 'https://router.project-osrm.org';
+
 // Road-network profiles the public OSRM demo router can snap a route to -
 // only for modes that actually travel on a road network it knows about.
-// Everything else (rail, water, air) has no equivalent free routing service,
-// so those draw a straight line between the two visits instead.
+// Everything else (rail, water, air) has no equivalent routing service, so
+// those draw a straight line between the two visits instead.
 const OSRM_PROFILES = { driving: 'driving', taxi: 'driving', bus: 'driving', walking: 'foot', cycling: 'bike' };
 
 function wpModeColor(mode) {
@@ -141,7 +149,7 @@ async function wpFetchRoute(mode, fromLat, fromLon, toLat, toLon) {
   const profile = OSRM_PROFILES[mode];
   if (!profile) return null;
   try {
-    const url = `https://router.project-osrm.org/route/v1/${profile}/${fromLon},${fromLat};${toLon},${toLat}?overview=full&geometries=geojson`;
+    const url = `${OSRM_BASE_URL}/route/v1/${profile}/${fromLon},${fromLat};${toLon},${toLat}?overview=full&geometries=geojson`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.code !== 'Ok' || !data.routes || !data.routes.length) return null;
@@ -151,45 +159,46 @@ async function wpFetchRoute(mode, fromLat, fromLon, toLat, toLon) {
   }
 }
 
-// A recorded GPS point is real, but sparse historical points (see
-// scripts/import_raw_signals.py - captured at wifi-scan/significant-
-// location-change intervals, not continuous tracking) can be a kilometre
-// or more apart. Joining them with plain straight lines then cuts directly
-// across fields wherever the real road bends between two consecutive
-// fixes - confirmed live, and worse than not knowing the road at all,
-// since it reads as confidently wrong rather than honestly uncertain.
-// Passing every recorded point as an ordered OSRM waypoint keeps the route
-// anchored to what was actually recorded while still following real roads
-// between each pair - this is the same class of fix as the OSRM/rail
-// "estimated route" upgrade below, just seeded with real waypoints instead
-// of only the two flanking visits.
-async function wpFetchRouteViaPoints(mode, latlngs) {
-  const profile = OSRM_PROFILES[mode];
-  if (!profile || latlngs.length < 2) return null;
+// OSRM's Match service (distinct from Route, used elsewhere here) is built
+// exactly for a real recorded trace, however dense or noisy: it snaps the
+// whole thing onto the most likely road path, discarding/downweighting
+// implausible pings along the way. Confirmed live this matters even for
+// dense live-tracking data, not just sparse historical replays - a day
+// recorded with OpenTracks (dense pings, but noticeably less accurate than
+// OwnTracks') connected as plain straight lines between consecutive points
+// zigzagged into visible spikes well off any real road. 10 is the public
+// demo server's real Match limit (undocumented, confirmed live by binary
+// search: 10 succeeds, 11 fails "TooBig") - a dense day's segment can
+// easily need dozens of chunks at this size, each overlapping its
+// neighbour by one point so the stitched-together result has no visible
+// seam at the join.
+const OSRM_MATCH_CHUNK_SIZE = 10;
+
+async function wpFetchOneMatch(profile, latlngs) {
   try {
     const coords = latlngs.map(([lat, lon]) => `${lon},${lat}`).join(';');
-    const url = `https://router.project-osrm.org/route/v1/${profile}/${coords}?overview=full&geometries=geojson`;
+    const url = `${OSRM_BASE_URL}/match/v1/${profile}/${coords}?overview=full&geometries=geojson`;
     const res = await fetch(url);
     const data = await res.json();
-    if (data.code !== 'Ok' || !data.routes || !data.routes.length) return null;
-    return data.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+    if (data.code !== 'Ok' || !data.matchings || !data.matchings.length) return null;
+    return data.matchings.flatMap((m) => m.geometry.coordinates.map(([lon, lat]) => [lat, lon]));
   } catch (e) {
     return null;
   }
 }
 
-// Live OwnTracks tracking pings every few seconds/tens of metres - dense
-// enough that connecting them directly already hugs the real road, no
-// snapping needed (and not wanted - it's real data, no reason to spend an
-// OSRM call second-guessing it). Only a sparse sequence (backfilled
-// historical points) benefits from the snap-through-waypoints upgrade.
-const SPARSE_AVG_GAP_M = 400;
+async function wpFetchMatchedRoute(mode, latlngs) {
+  const profile = OSRM_PROFILES[mode];
+  if (!profile || latlngs.length < 2) return null;
+  if (latlngs.length <= OSRM_MATCH_CHUNK_SIZE) return wpFetchOneMatch(profile, latlngs);
 
-function wpIsSparsePath(latlngs) {
-  if (latlngs.length < 2) return false;
-  let total = 0;
-  for (let i = 1; i < latlngs.length; i++) total += wpHaversineM(latlngs[i - 1], latlngs[i]);
-  return total / (latlngs.length - 1) > SPARSE_AVG_GAP_M;
+  const chunks = [];
+  for (let i = 0; i < latlngs.length - 1; i += OSRM_MATCH_CHUNK_SIZE - 1) {
+    chunks.push(latlngs.slice(i, i + OSRM_MATCH_CHUNK_SIZE));
+  }
+  const results = await Promise.all(chunks.map((c) => wpFetchOneMatch(profile, c)));
+  if (results.some((r) => !r)) return null; // a failed chunk undermines the whole stitched line
+  return results.flat();
 }
 
 // train/subway/tram have no OSRM equivalent (no free public router does
@@ -287,15 +296,48 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
   // sea it crossed. Recorded-vs-estimated is now conveyed by line style
   // (solid here, dashed below) rather than colour, so colour is free to
   // just mean "mode" consistently everywhere on the map.
-  const toSnap = [];
+  // Flanking visits resolved for every segment up front (not just ones
+  // lacking raw coverage) - a manual snap_rail override on a raw-covered
+  // segment still needs an endpoint pair to route between, the same as the
+  // no-raw-coverage case below already does.
+  const flankingVisits = new Map();
+  for (let i = 0; i < timeline.length; i++) {
+    const entry = timeline[i];
+    if (entry.type !== 'segment') continue;
+    const prevVisit = [...timeline.slice(0, i)].reverse().find((e) => e.type === 'visit') || contextVisits.before;
+    const nextVisit = timeline.slice(i + 1).find((e) => e.type === 'visit') || contextVisits.after;
+    if (prevVisit && nextVisit) flankingVisits.set(entry, { prevVisit, nextVisit });
+  }
+
+  const toSnapRoad = [];
+  const toSnapRailFromRaw = [];
   for (const seg of segments) {
     const legPoints = points.filter((p) => p.tst >= seg.start_ts && p.tst <= seg.end_ts);
     if (legPoints.length < 2) continue;
     const latlngs = legPoints.map((p) => [p.lat, p.lon]);
     const line = wpAddLayer(map, wpCasedPolyline(latlngs, wpModeColor(seg.mode), { opacity: 0.9 }));
     bounds.push(...latlngs);
-    if (wpIsSparsePath(latlngs) && OSRM_PROFILES[seg.mode]) {
-      toSnap.push({ mode: seg.mode, latlngs, color: wpModeColor(seg.mode), line });
+
+    // render_mode: "raw" skips any snap attempt outright (an honest
+    // recorded trace, e.g. a genuinely off-road hike a road/rail snap
+    // would otherwise wrongly straighten). "snap_rail" forces an Overpass
+    // rail-route attempt between this segment's own flanking visits, even
+    // for a mode that wouldn't normally get one - for correcting an "auto"
+    // guess that snapped to the wrong network (or didn't snap at all).
+    // "snap_road"/"auto" (default) both attempt a Match-based road snap
+    // for any mode with a road profile - no longer gated to sparse paths
+    // only (see wpFetchMatchedRoute's own comment: confirmed live that
+    // dense-but-noisy tracker data needs this too, not just sparse
+    // historical replays).
+    const renderMode = seg.render_mode || 'auto';
+    if (renderMode === 'raw') continue;
+    if (renderMode === 'snap_rail') {
+      const flanking = flankingVisits.get(seg);
+      if (flanking) toSnapRailFromRaw.push({ entry: seg, ...flanking, color: wpModeColor(seg.mode), line });
+      continue;
+    }
+    if (OSRM_PROFILES[seg.mode]) {
+      toSnapRoad.push({ mode: seg.mode, latlngs, color: wpModeColor(seg.mode), line });
     }
   }
 
@@ -318,22 +360,18 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
   // old code (which awaited each fetch before finishing the render at all)
   // left the map showing a stale/wrong view for 20-30 seconds.
   const segmentEntries = [];
-  for (let i = 0; i < timeline.length; i++) {
-    const entry = timeline[i];
-    if (entry.type !== 'segment') continue;
+  for (const entry of segments) {
     if (wpHasRawCoverage(points, entry.start_ts, entry.end_ts)) continue;
-
     // A segment that starts before this day's first visit, or ends after
     // its last one (an overnight arrival/departure - see day.py's
     // context_visits), has no matching Visit in today's own timeline at
-    // all. Falls back to the nearest visit just outside the day so the
-    // segment still has somewhere to draw to, rather than being silently
-    // dropped from the map entirely (confirmed live: an overnight flight
-    // simply didn't appear).
-    const prevVisit = [...timeline.slice(0, i)].reverse().find((e) => e.type === 'visit') || contextVisits.before;
-    const nextVisit = timeline.slice(i + 1).find((e) => e.type === 'visit') || contextVisits.after;
-    if (!prevVisit || !nextVisit) continue;
-    segmentEntries.push({ entry, prevVisit, nextVisit });
+    // all. flankingVisits already falls back to contextVisits for that
+    // case, so this only drops a segment with genuinely no visit on
+    // either side to draw to at all (confirmed live: an overnight flight
+    // simply didn't appear before this fallback existed).
+    const flanking = flankingVisits.get(entry);
+    if (!flanking) continue;
+    segmentEntries.push({ entry, ...flanking });
   }
 
   // Two (or more) segments with no Visit between them - e.g. a train
@@ -369,7 +407,11 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
       // Only an unambiguous (ungrouped) segment gets a real routing attempt -
       // a split segment's "endpoint" is itself a guess, so a routed path to/
       // from a made-up point isn't any more accurate than the straight line.
-      if (group.length === 1) toUpgrade.push({ entry: se.entry, prevVisit, nextVisit, color, line });
+      // render_mode "raw" skips the attempt too - an explicit "just show me
+      // the straight-line estimate, don't guess further" override.
+      if (group.length === 1 && (se.entry.render_mode || 'auto') !== 'raw') {
+        toUpgrade.push({ entry: se.entry, prevVisit, nextVisit, color, line });
+      }
     }
   }
 
@@ -386,7 +428,9 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
   // both Overpass (rail) and OSRM (road) calls are still self-throttled
   // server-side/rate-limit-conscious regardless of how many arrive together.
   toUpgrade.forEach(async ({ entry, prevVisit, nextVisit, color, line }) => {
-    const routed = RAIL_MODES.has(entry.mode)
+    const renderMode = entry.render_mode || 'auto';
+    const useRail = renderMode === 'snap_rail' || (renderMode !== 'snap_road' && RAIL_MODES.has(entry.mode));
+    const routed = useRail
       ? await wpFetchRailRoute(entry.id, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon)
       : await wpFetchRoute(entry.mode, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon);
     if (renderToken !== _wpDayMapRenderToken) return; // superseded by a newer render
@@ -400,18 +444,35 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
     }
   });
 
-  // Same non-blocking upgrade pattern, for sparse recorded paths (see
-  // wpIsSparsePath) - stays solid, not dashed, even once snapped: it's
-  // still built from real recorded waypoints, just following actual roads
-  // between them now instead of jumping straight across whatever's between
-  // two fixes a kilometre or more apart.
-  toSnap.forEach(async ({ mode, latlngs, color, line }) => {
-    const routed = await wpFetchRouteViaPoints(mode, latlngs);
+  // Same non-blocking upgrade pattern, for recorded raw-point paths - stays
+  // solid, not dashed, even once snapped: it's still built from real
+  // recorded waypoints, just following actual roads between them now
+  // instead of a straight line jumping across whatever's between two
+  // fixes (was previously only attempted for sparse historical replays;
+  // wpFetchMatchedRoute's own comment covers why dense live-tracking data
+  // needs this too).
+  toSnapRoad.forEach(async ({ mode, latlngs, color, line }) => {
+    const routed = await wpFetchMatchedRoute(mode, latlngs);
     if (renderToken !== _wpDayMapRenderToken) return;
     if (routed) {
       map.removeLayer(line);
       map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
       wpAddLayer(map, wpCasedPolyline(routed, color, { opacity: 0.9 }));
+    }
+  });
+
+  // A manual snap_rail override on a segment that DOES have raw coverage -
+  // routes between its flanking visits (rail routing is endpoint-based, see
+  // app/routing.py, not built from the recorded points themselves), so the
+  // result is a router's guess like the no-raw-coverage case above, hence
+  // dashed rather than solid despite replacing an originally-solid line.
+  toSnapRailFromRaw.forEach(async ({ entry, prevVisit, nextVisit, color, line }) => {
+    const routed = await wpFetchRailRoute(entry.id, prevVisit.lat, prevVisit.lon, nextVisit.lat, nextVisit.lon);
+    if (renderToken !== _wpDayMapRenderToken) return;
+    if (routed) {
+      map.removeLayer(line);
+      map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
+      wpAddLayer(map, wpCasedPolyline(routed, color, { dashArray: '4 8' }));
     }
   });
 }

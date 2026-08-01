@@ -296,6 +296,17 @@
                             <option value="boating">boating</option>
                             <option value="flying">flying</option>
                           </select>
+                          <!-- Map display override - see TripSegment.render_mode's docstring.
+                               Same static-options + :value/@change pattern as the mode select
+                               above, for the same reasons. -->
+                          <select class="field-input" style="display: inline-block; width: auto; padding: 2px 6px; font-size: 13px"
+                                  title="How this leg is drawn on the map" :value="entry.render_mode || 'auto'"
+                                  @change="updateSegmentRenderMode(entry, $event.target.value)">
+                            <option value="auto">Auto</option>
+                            <option value="raw">Raw plot</option>
+                            <option value="snap_road">Snap to road</option>
+                            <option value="snap_rail">Snap to rail</option>
+                          </select>
                           <button class="btn-icon" style="width: 24px; height: 24px" title="This was actually a stop - convert to a visit"
                                   @click="openConvertSegment(entry)">
                             <i data-lucide="map-pin-plus" class="w-3 h-3"></i>
