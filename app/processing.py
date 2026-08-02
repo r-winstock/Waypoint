@@ -268,6 +268,54 @@ def _geocode_visits(session: Session) -> None:
             visit.place_id = place.id
 
 
+def _remove_contained_google_visits(session: Session) -> int:
+    """Deletes google_import visits that are fully time-contained within
+    another, longer google_import visit - confirmed live as the root cause of
+    a real trip being split into two separate Trip records (Penzance,
+    Manchester, Benidoleig all showed the exact same shape). Google's own
+    Timeline export occasionally emits a low-confidence fallback "visit" -
+    often at Home specifically, always with suspiciously round start/end
+    times (both exactly on the hour, unlike every genuine GPS-derived visit
+    in the data) - for a stretch it wasn't actually confident about, even
+    while a real, longer, concurrent visit elsewhere (a hotel stay in
+    Cornwall, say) already covers that exact time span. You can't genuinely
+    be fully "at Home" for two hours in the middle of a twenty-hour Cornwall
+    hotel stay - one of the two is Google's own bookkeeping artifact, not a
+    real observation, and _rebuild_trips' away-run logic upstream of this
+    treats each one at face value, wrongly ending the real trip's run right
+    at the fabricated visit and starting a fresh one straight after it.
+    Left in the data, these also inflate the affected place's visit count
+    (Home gained roughly 5000 of these) and clutter the Day view on the
+    affected date with a visit that never happened.
+
+    Sweeps visits in start_ts order tracking still-open ("active") visits;
+    a visit is contained (and deleted) if some active visit strictly
+    encloses its time range and is strictly longer. Isolated visits that
+    happen to share the same round-hour shape but don't overlap anything
+    longer are left alone - there's no positive evidence those are wrong,
+    only that they're imprecise, and deleting real data on a hunch is worse
+    than leaving a low-confidence entry in place.
+    """
+    visits = (
+        session.query(Visit)
+        .filter(Visit.source == "google_import")
+        .order_by(Visit.start_ts)
+        .all()
+    )
+    active: list[tuple[int, int, int, int]] = []  # (start_ts, end_ts, duration, id)
+    contained_ids: list[int] = []
+    for v in visits:
+        duration = v.end_ts - v.start_ts
+        active = [a for a in active if a[1] >= v.start_ts]
+        if any(a[0] <= v.start_ts and a[1] >= v.end_ts and a[2] > duration for a in active):
+            contained_ids.append(v.id)
+        else:
+            active.append((v.start_ts, v.end_ts, duration, v.id))
+    if contained_ids:
+        session.execute(delete(Visit).where(Visit.id.in_(contained_ids)))
+    return len(contained_ids)
+
+
 def _rebuild_trips(session: Session) -> None:
     # A manually-corrected trip (see PUT /api/trips/{id}) is about to be
     # deleted along with every other source="computed" row below - snapshot
@@ -307,6 +355,8 @@ def _rebuild_trips(session: Session) -> None:
     if not home_periods:
         return  # no home location(s) configured yet - no trips without one
 
+    _remove_contained_google_visits(session)
+
     # kml_import and photo_import visits are excluded from the gap/radius
     # heuristic below: they already stand alone (or, for kml_import, get
     # their trip boundaries directly from the source file's own folder
@@ -326,6 +376,18 @@ def _rebuild_trips(session: Session) -> None:
     )
 
     def _is_away(visit: Visit) -> bool:
+        # A regular workplace is never "away", however far it sits from
+        # home - confirmed live this was a real, large problem, not a
+        # cosmetic one: a daily commute to an office 15 miles from home
+        # cleared both the radius and TRIP_MIN_DURATION_S checks below on
+        # nearly every single working day, fabricating 583 separate one-day
+        # "trips" out of nothing but going to work - the majority of every
+        # computed trip in the database. Checked before the home-period
+        # radius test, not instead of it: Work is disqualifying on its own
+        # regardless of distance, since unlike Home there's no reason a
+        # commute would ever sit *inside* a home radius to begin with.
+        if visit.place and visit.place.category == "Work":
+            return False
         # Unlike _tag_home (any period, ever), this needs the *one* period
         # that actually covers this visit's own timestamp - the whole point
         # of HomePeriod is that a visit near an old address should count as

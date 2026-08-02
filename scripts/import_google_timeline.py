@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.db import SessionLocal, init_db  # noqa: E402
 from app.geocoding import resolve_place  # noqa: E402
 from app.models import TripSegment, Visit  # noqa: E402
-from app.processing import _rebuild_trips  # noqa: E402
+from app.processing import _rebuild_trips, _remove_contained_google_visits  # noqa: E402
 
 COMMIT_EVERY = 200
 
@@ -160,6 +160,11 @@ def run(json_path: Path) -> None:
                     print(f"  ... {visits} visits, {segments} segments, {skipped} skipped ({elapsed:.0f}s)", flush=True)
 
             session.commit()
+
+        print("Removing low-confidence phantom visits (Google's own fallback data)...", flush=True)
+        removed = _remove_contained_google_visits(session)
+        session.commit()
+        print(f"  removed {removed} phantom visits", flush=True)
 
         print("Recomputing trips from imported + existing visits...", flush=True)
         _rebuild_trips(session)
