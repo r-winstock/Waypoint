@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.country_names import country_name_en
 from app.db import db_dependency, get_setting
-from app.models import LocationPoint, Place, Trip, TripSegment, Visit
+from app.models import HomePeriod, LocationPoint, Place, Trip, TripSegment, Visit
 
 router = APIRouter()
 
@@ -763,6 +763,7 @@ def get_insights_highlights(session: Session = Depends(db_dependency)):
         "total_visits": total_visits,
         "total_distance_m": total_distance_m,
         "total_countries": total_countries,
+        "percent_of_world": round(total_countries / WORLD_COUNTRY_COUNT * 100, 1) if total_countries else 0.0,
         "total_cities": total_cities,
         "total_trip_days": total_trip_days,
         "avg_trip_days": avg_trip_days,
@@ -1037,10 +1038,19 @@ def get_insights_stories(session: Session = Depends(db_dependency)):
 
 @router.get("/api/insights/heatmap/{year}")
 def get_insights_heatmap(year: int, session: Session = Depends(db_dependency)):
-    """Daily visit counts for a calendar-heatmap (GitHub-contributions
-    style) of one year - every day of the year is returned, zero-filled,
-    same reasoning as the Day view's history chart: an evenly-spaced
-    timeline needs explicit zeros, not gaps silently skipped."""
+    """Daily visit counts and away-from-home hours for a calendar-heatmap
+    (GitHub-contributions style) of one year - every day of the year is
+    returned, zero-filled, same reasoning as the Day view's history chart:
+    an evenly-spaced timeline needs explicit zeros, not gaps silently
+    skipped.
+
+    away_hours (not visit_count) drives the heatmap's own cell intensity -
+    this is a *travel* heatmap, not a visit-count one. Trip.start_ts/end_ts
+    already define away-from-home stretches (see get_insights_highlights'
+    own total_trip_days, same reasoning here just at daily granularity), and
+    a single long stay produces very few Visit rows but should still read
+    as "away" on every day it spans, which raw visit counting would miss
+    entirely. visit_count is kept alongside for the existing tooltip."""
     start_ts = int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp())
     end_ts = int(datetime(year + 1, 1, 1, tzinfo=timezone.utc).timestamp())
     day_expr = func.strftime("%Y-%m-%d", Visit.start_ts, "unixepoch")
@@ -1052,15 +1062,221 @@ def get_insights_heatmap(year: int, session: Session = Depends(db_dependency)):
     )
     counts = dict(rows)
 
+    # Only trips overlapping this year at all - typically a small subset of
+    # the whole-history trip table, so the per-day overlap loop below stays
+    # cheap even though it's a plain Python scan rather than a SQL query.
+    trip_rows = session.query(Trip.start_ts, Trip.end_ts).filter(Trip.start_ts < end_ts, Trip.end_ts > start_ts).all()
+
     days = []
     d = date(year, 1, 1)
     one_day = timedelta(days=1)
     last_day = date(year, 12, 31)
     while d <= last_day:
         key = d.isoformat()
-        days.append({"date": key, "visit_count": counts.get(key, 0)})
+        day_start = int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp())
+        day_end = day_start + 86400
+        away_s = sum(max(0, min(t_end, day_end) - max(t_start, day_start)) for t_start, t_end in trip_rows)
+        days.append({"date": key, "visit_count": counts.get(key, 0), "away_hours": round(away_s / 3600, 1)})
         d += one_day
     return {"year": year, "days": days}
+
+
+@router.get("/api/insights/life-calendar")
+def get_insights_life_calendar(session: Session = Depends(db_dependency)):
+    """Whole-life "weeks of your life" grid (the Tim Urban / Wait But Why
+    format) - one entry per week from birth_date to now, coloured by the
+    real fraction of that week spent away from home. Every commercial
+    version of this needs you to manually tag which weeks were "travel" -
+    this one draws itself from real tracked history instead, which is only
+    possible because Waypoint's own data goes back decades further than a
+    phone's own tracking ever could (KML/Google Timeline import, not just
+    live OwnTracks pings).
+
+    has_data distinguishes "confirmed at home, zero trips" from "before any
+    tracking existed at all" (early childhood, near-certainly, for most
+    users) - a week with no data at all should render as neutrally blank,
+    not as a false "stayed home the whole week" claim the data can't back
+    up. Approximated by the earliest HomePeriod (or, lacking that, the
+    earliest Visit) in the whole dataset - not perfect (a HomePeriod could
+    itself start later than data collection did), but a reasonable proxy
+    without adding a dedicated "tracking start" setting for what's a single
+    cosmetic threshold."""
+    birth_date_str = get_setting(session, "birth_date", "")
+    if not birth_date_str:
+        return {"available": False, "weeks": []}
+    try:
+        birth_ts = int(datetime.strptime(birth_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        return {"available": False, "weeks": []}
+
+    earliest_known_ts = session.query(func.min(HomePeriod.start_ts)).scalar()
+    if earliest_known_ts is None:
+        earliest_known_ts = session.query(func.min(Visit.start_ts)).scalar()
+
+    trip_rows = session.query(Trip.start_ts, Trip.end_ts).all()
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    week_s = 7 * 86400
+
+    weeks = []
+    week_start = birth_ts
+    while week_start < now_ts:
+        week_end = week_start + week_s
+        has_data = earliest_known_ts is not None and week_end > earliest_known_ts
+        away_s = (
+            sum(max(0, min(t_end, week_end) - max(t_start, week_start)) for t_start, t_end in trip_rows)
+            if has_data
+            else 0
+        )
+        weeks.append(
+            {
+                "start_date": datetime.fromtimestamp(week_start, tz=timezone.utc).strftime("%Y-%m-%d"),
+                "has_data": has_data,
+                "away_fraction": round(away_s / week_s, 3) if has_data else 0.0,
+            }
+        )
+        week_start = week_end
+
+    return {"available": True, "birth_date": birth_date_str, "weeks": weeks}
+
+
+@router.get("/api/insights/wrapped")
+def get_insights_wrapped(year: int | None = None, session: Session = Depends(db_dependency)):
+    """Curated, ordered "slides" for the full-screen Wrapped story view - a
+    specific calendar year, or all-time if year is omitted. Same convention
+    as get_insights_stories: structured raw data per slide, never a pre-
+    composed sentence - the frontend already owns every number-formatting
+    convention this app uses, and duplicating that here would be a second,
+    driftable source of truth for the same numbers shown elsewhere. Each
+    slide is only included if its own underlying data is real and non-
+    trivial, same "no insight beats a wrong-looking one" principle stories
+    already follows."""
+    if year is not None:
+        start_ts = int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp())
+        end_ts = int(datetime(year + 1, 1, 1, tzinfo=timezone.utc).timestamp())
+        prev_start_ts = int(datetime(year - 1, 1, 1, tzinfo=timezone.utc).timestamp())
+        prev_end_ts = start_ts
+    else:
+        start_ts, end_ts = 0, int(datetime.now(timezone.utc).timestamp())
+        prev_start_ts = prev_end_ts = None
+
+    travel = _travel_totals(session, start_ts, end_ts)
+    total_distance_m = sum(t["distance_m"] for t in travel.values())
+
+    prev_distance_m = None
+    if prev_start_ts is not None:
+        prev_travel = _travel_totals(session, prev_start_ts, prev_end_ts)
+        prev_distance_m = sum(t["distance_m"] for t in prev_travel.values())
+
+    trip_rows = (
+        session.query(Trip.start_ts, Trip.end_ts, Trip.primary_city, Trip.primary_country, Trip.name)
+        .filter(Trip.start_ts < end_ts, Trip.end_ts >= start_ts)
+        .all()
+    )
+    # Every day figure below clips each trip's span to the period first, so
+    # a trip spanning New Year's Eve doesn't award its full length to both
+    # the year it starts in and the one it ends in.
+    total_trip_days = sum(
+        (min(t.end_ts, end_ts) - max(t.start_ts, start_ts) + 86399) // 86400
+        for t in trip_rows
+        if min(t.end_ts, end_ts) > max(t.start_ts, start_ts)
+    )
+    period_days = max((end_ts - start_ts) // 86400, 1)
+
+    city_days: Counter[str] = Counter()
+    city_country: dict[str, str | None] = {}
+    for t in trip_rows:
+        clipped_s = min(t.end_ts, end_ts) - max(t.start_ts, start_ts)
+        if clipped_s <= 0 or not t.primary_city:
+            continue
+        city_days[t.primary_city] += clipped_s
+        city_country[t.primary_city] = t.primary_country
+    top_destination = None
+    if city_days:
+        city, seconds = city_days.most_common(1)[0]
+        top_destination = {"city": city, "country": city_country[city], "days": round(seconds / 86400)}
+
+    longest_trip_row = max(trip_rows, key=lambda t: t.end_ts - t.start_ts, default=None)
+    longest_trip = (
+        {
+            "name": longest_trip_row.name,
+            "primary_city": longest_trip_row.primary_city,
+            "primary_country": longest_trip_row.primary_country,
+            "days": round((longest_trip_row.end_ts - longest_trip_row.start_ts) / 86400),
+        }
+        if longest_trip_row
+        else None
+    )
+
+    country_rows = (
+        session.query(func.distinct(Place.country_code))
+        .join(Visit, Visit.place_id == Place.id)
+        .filter(Place.country_code.isnot(None), Visit.start_ts >= start_ts, Visit.start_ts < end_ts)
+        .all()
+    )
+    country_count = len(country_rows)
+
+    # New-to-you countries this year specifically - only meaningful in
+    # year mode (in all-time mode, every country is "new" the first time,
+    # which isn't an interesting slide).
+    new_countries = None
+    if year is not None:
+        first_visit_per_country = (
+            session.query(Place.country_code, Place.country, func.min(Visit.start_ts).label("first_ts"))
+            .join(Visit, Visit.place_id == Place.id)
+            .filter(Place.country_code.isnot(None))
+            .group_by(Place.country_code)
+            .all()
+        )
+        new_countries = [
+            country_name_en(r.country_code, r.country) for r in first_visit_per_country if start_ts <= r.first_ts < end_ts
+        ]
+
+    favourite_mode_name, favourite_mode_data = max(
+        travel.items(), key=lambda kv: kv[1]["distance_m"], default=(None, None)
+    )
+    favourite_mode = (
+        {"mode": favourite_mode_name, "distance_m": favourite_mode_data["distance_m"]} if favourite_mode_name else None
+    )
+
+    earliest_ts = session.query(func.min(Trip.start_ts)).scalar()
+    years_tracked = (
+        round((int(datetime.now(timezone.utc).timestamp()) - earliest_ts) / 86400 / 365.25, 1) if earliest_ts else None
+    )
+
+    slides: list[dict] = [{"type": "intro", "year": year, "years_tracked": years_tracked}]
+
+    if total_distance_m > 0:
+        slides.append({"type": "distance", "distance_m": total_distance_m, "prev_distance_m": prev_distance_m})
+
+    if total_trip_days > 0:
+        slides.append({"type": "trip_days", "days": total_trip_days, "period_days": period_days})
+
+    if top_destination:
+        slides.append({"type": "top_destination", **top_destination})
+
+    if longest_trip:
+        slides.append({"type": "longest_trip", **longest_trip})
+
+    if country_count > 0:
+        slides.append(
+            {
+                "type": "countries",
+                "count": country_count,
+                "percent_of_world": round(country_count / WORLD_COUNTRY_COUNT * 100),
+                "new_countries": new_countries,
+            }
+        )
+
+    if favourite_mode:
+        slides.append({"type": "favourite_mode", **favourite_mode})
+
+    if total_distance_m > MOON_DISTANCE_M:
+        slides.append({"type": "moon_trips", "distance_m": total_distance_m})
+
+    slides.append({"type": "closing"})
+
+    return {"year": year, "slides": slides}
 
 
 @router.get("/api/insights/{year}/{month}")

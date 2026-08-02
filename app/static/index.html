@@ -495,10 +495,20 @@
         <button class="subtab-btn" :class="insights.subtab==='trends' && 'active'" @click="switchInsightsSubtab('trends')">Trends</button>
         <button class="subtab-btn" :class="insights.subtab==='breakdown' && 'active'" @click="switchInsightsSubtab('breakdown')">Breakdown</button>
         <button class="subtab-btn" :class="insights.subtab==='records' && 'active'" @click="switchInsightsSubtab('records')">Records</button>
+        <button class="subtab-btn" :class="insights.subtab==='life' && 'active'" @click="switchInsightsSubtab('life')">Life</button>
       </div>
 
       <!-- ─── Overview ─── -->
       <div x-show="insights.subtab==='overview'">
+        <button class="wrapped-entry-btn mb-3" @click="openWrapped()">
+          <span class="wrapped-entry-icon">✨</span>
+          <span>
+            <span class="wrapped-entry-title">Your Waypoint Wrapped</span>
+            <span class="wrapped-entry-sub">A year (or a lifetime) in travel, in one story</span>
+          </span>
+          <i data-lucide="chevron-right" class="w-4 h-4"></i>
+        </button>
+
         <template x-if="currentStory()">
           <div class="mb-3">
             <div class="story-card" :class="!storyImgFailed && storyImageQuery(currentStory()) && 'has-photo'">
@@ -545,6 +555,7 @@
           <div class="stat-tile">
             <div class="label">Countries visited</div>
             <div class="value tabular" x-text="insightsHighlights ? insightsHighlights.total_countries : '—'"></div>
+            <div class="detail" x-show="insightsHighlights && insightsHighlights.percent_of_world > 0" x-text="insightsHighlights && (insightsHighlights.percent_of_world + '% of the world')"></div>
           </div>
           <div class="stat-tile">
             <div class="label">Cities visited</div>
@@ -638,6 +649,32 @@
             </svg>
             <div class="history-chart-axis" style="position: absolute; left: 0; right: 0; bottom: 0; height: 16px; pointer-events: none">
               <template x-for="tick in insightsYearlyTicks()" :key="tick.label">
+                <span class="history-chart-axis-label" :style="`position:absolute; left:${tick.x / 10}%; transform:translateX(-50%)`" x-text="tick.label"></span>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lifetime odometer: cumulative distance, always climbing - the
+             "how far in total" companion to the year-over-year chart above
+             it ("how far this year"). Same viewBox/path-building convention
+             as that chart, just fed a running sum instead of per-year
+             values. -->
+        <div class="mb-6 history-chart-card">
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-xs flex items-center gap-1" style="color: var(--wp-fg-dim)"><span>🚀</span> Lifetime distance travelled</div>
+            <div class="text-xs font-medium tabular" style="color: var(--wp-accent-light); min-height: 15px"
+                 x-show="insightsOdometerHover" x-text="insightsOdometerHover && (insightsOdometerHover.point.year + ' · ' + formatMiles(insightsOdometerHover.point.total_m))"></div>
+          </div>
+          <div style="position: relative">
+            <svg viewBox="0 0 1000 240" preserveAspectRatio="none" class="history-chart"
+                 @pointermove="insightsOdometerPointerMove($event)" @pointerleave="insightsOdometerPointerLeave()">
+              <path :d="insightsOdometerAreaPath()" class="history-chart-area"></path>
+              <path :d="insightsOdometerLinePath()" class="history-chart-line"></path>
+              <line x-show="insightsOdometerHover" :x1="insightsOdometerHover && insightsOdometerHover.x" :x2="insightsOdometerHover && insightsOdometerHover.x" y1="0" y2="200" class="history-chart-playhead"></line>
+            </svg>
+            <div class="history-chart-axis" style="position: absolute; left: 0; right: 0; bottom: 0; height: 16px; pointer-events: none">
+              <template x-for="tick in insightsOdometerTicks()" :key="tick.label">
                 <span class="history-chart-axis-label" :style="`position:absolute; left:${tick.x / 10}%; transform:translateX(-50%)`" x-text="tick.label"></span>
               </template>
             </div>
@@ -1092,6 +1129,42 @@
           </div>
         </template>
       </div>
+
+      <!-- ─── Life ─── -->
+      <div x-show="insights.subtab==='life'">
+        <template x-if="lifeCalendar && lifeCalendar.available">
+          <div>
+            <div class="text-xs mb-3" style="color: var(--wp-fg-dim)">
+              Your life in weeks, since <span x-text="formatDayString(lifeCalendar.birth_date)"></span> - each row is one year, each cell one week, coloured by how much of it was spent away from home.
+            </div>
+            <div class="life-calendar-scroll">
+              <div class="life-calendar-grid">
+                <template x-for="(row, ri) in lifeCalendarRows()" :key="ri">
+                  <div class="life-calendar-row">
+                    <template x-for="(week, wi) in row" :key="wi">
+                      <div class="life-calendar-cell" :class="week.has_data && 'clickable'" :style="lifeCalendarCellStyle(week)" :title="lifeCalendarCellTitle(week)" @click="openLifeCalendarWeek(week)"></div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 mt-3 text-xs" style="color: var(--wp-fg-dim)">
+              <div class="life-calendar-legend-swatch" style="background: var(--wp-surface-3)"></div>
+              <span>home</span>
+              <div class="life-calendar-legend-swatch" style="background: var(--wp-accent)"></div>
+              <span>away</span>
+              <div class="life-calendar-legend-swatch" style="background: transparent; border: 1px dashed var(--wp-border)"></div>
+              <span>before tracking began</span>
+            </div>
+          </div>
+        </template>
+        <template x-if="lifeCalendar && !lifeCalendar.available">
+          <div class="empty-state">
+            <div class="mb-1">Set your birthdate to see your life in weeks:</div>
+            <code style="font-size: 11px; word-break: break-all" x-text="birthDateCurlCommand()"></code>
+          </div>
+        </template>
+      </div>
     </div>
 
     <!-- ═══════════ PLACES ═══════════ -->
@@ -1320,6 +1393,52 @@
   <footer class="text-xs text-center py-3" style="color: var(--wp-fg-faint)" x-show="appVersion">
     Waypoint <span x-text="appVersion"></span>
   </footer>
+
+  <!-- ═══════════ WAYPOINT WRAPPED ═══════════ -->
+  <div class="modal-backdrop wrapped-backdrop" x-show="wrapped.open" style="display: none">
+    <div class="wrapped-modal">
+      <button class="wrapped-close" @click="closeWrapped()"><i data-lucide="x" class="w-5 h-5"></i></button>
+
+      <template x-if="wrapped.mode === 'picker'">
+        <div class="wrapped-picker">
+          <div class="wrapped-picker-icon">✨</div>
+          <h2 class="wrapped-picker-title">Your Waypoint Wrapped</h2>
+          <p class="wrapped-picker-sub">Pick a year, or see your whole journey at once.</p>
+          <div class="wrapped-picker-years">
+            <button class="wrapped-year-btn wrapped-year-btn-all" @click="startWrapped(null)">All-time</button>
+            <template x-for="y in wrappedYearOptions()" :key="y">
+              <button class="wrapped-year-btn" @click="startWrapped(y)" x-text="y"></button>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="wrapped.mode === 'story'">
+        <div class="wrapped-story">
+          <div class="wrapped-progress">
+            <template x-for="(s, i) in (wrapped.slides || [])" :key="i">
+              <div class="wrapped-progress-seg" :class="i <= wrapped.index && 'filled'"></div>
+            </template>
+          </div>
+
+          <template x-if="wrapped.loading">
+            <div class="wrapped-loading">Building your story…</div>
+          </template>
+
+          <template x-if="!wrapped.loading && wrappedCurrentSlide()">
+            <div class="wrapped-slide">
+              <div class="wrapped-slide-icon" x-text="wrappedIcon(wrappedCurrentSlide().type)"></div>
+              <div class="wrapped-slide-big" x-text="wrappedBigDisplay(wrappedCurrentSlide())"></div>
+              <div class="wrapped-slide-label" x-text="wrappedSlideValue(wrappedCurrentSlide()).label"></div>
+            </div>
+          </template>
+
+          <div class="wrapped-tap-zone wrapped-tap-left" @click="wrappedBack()"></div>
+          <div class="wrapped-tap-zone wrapped-tap-right" @click="wrappedAdvance()"></div>
+        </div>
+      </template>
+    </div>
+  </div>
 
   <!-- ═══════════ PLACE CORRECTION MODAL ═══════════ -->
   <!-- No x-transition here deliberately: it desynced from placeEdit.open on

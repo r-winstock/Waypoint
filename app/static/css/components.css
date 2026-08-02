@@ -623,3 +623,88 @@ h1, h2, h3, .display {
   font-size: 10px; font-weight: 700; line-height: 1;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
+
+/* ─── Waypoint Wrapped entry button (Overview subtab) ─── */
+.wrapped-entry-btn {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; border-radius: var(--wp-radius-card);
+  background: linear-gradient(135deg, var(--wp-accent-bg), transparent);
+  border: 1px solid var(--wp-accent-border); cursor: pointer; text-align: left;
+}
+.wrapped-entry-btn:hover { border-color: var(--wp-accent); }
+.wrapped-entry-icon { font-size: 24px; line-height: 1; }
+.wrapped-entry-btn > span:nth-child(2) { flex: 1; display: flex; flex-direction: column; }
+.wrapped-entry-title { font-family: var(--wp-font-display); font-weight: 600; color: var(--wp-fg-primary); }
+.wrapped-entry-sub { font-size: 12px; color: var(--wp-fg-dim); }
+.wrapped-entry-btn > svg, .wrapped-entry-btn > i { color: var(--wp-fg-dim); }
+
+/* ─── Life calendar (Life subtab) - "your life in weeks", one row per year,
+   one cell per week. Deliberately smaller/denser than the activity heatmap's
+   own cells (decades of rows vs. one year of columns need a much smaller
+   unit to stay on screen at all). ─── */
+.life-calendar-scroll { overflow-x: auto; }
+.life-calendar-grid { display: flex; flex-direction: column; gap: 2px; min-width: 640px; }
+.life-calendar-row { display: flex; gap: 2px; }
+.life-calendar-cell {
+  flex: 1 1 0; aspect-ratio: 1; min-width: 6px; border-radius: 1px;
+  background: transparent; border: 1px solid var(--wp-border);
+}
+.life-calendar-cell.clickable { cursor: pointer; }
+.life-calendar-cell.clickable:hover { outline: 1px solid var(--wp-fg-muted); outline-offset: 1px; }
+.life-calendar-legend-swatch { width: 10px; height: 10px; border-radius: 1px; flex-shrink: 0; }
+
+/* ─── Waypoint Wrapped (full-screen story modal) ───
+   A deliberately different visual register from the rest of the app - a
+   near-black immersive backdrop regardless of the active theme (Atlas or
+   Voyage), same reasoning Spotify Wrapped's own design keeps one bold look
+   across the whole reveal rather than reskinning per the host app's theme.
+   Still built entirely from the app's existing --wp-accent/mode tokens, not
+   new colours, so it never clashes with whichever theme is active. */
+.wrapped-backdrop { background: rgba(3, 6, 14, 0.92); z-index: 3000; padding: 0; }
+.wrapped-modal {
+  position: relative; width: 100%; max-width: 420px; height: min(100vh, 780px);
+  border-radius: var(--wp-radius-card); overflow: hidden;
+  background: linear-gradient(160deg, #0b1220 0%, #14213b 60%, #1c2b4a 100%);
+  box-shadow: var(--wp-shadow-modal);
+  display: flex; flex-direction: column;
+}
+.wrapped-close {
+  position: absolute; top: 14px; right: 14px; z-index: 5;
+  width: 32px; height: 32px; border-radius: 50%; border: none;
+  background: rgba(255, 255, 255, 0.12); color: #fff;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.wrapped-close:hover { background: rgba(255, 255, 255, 0.22); }
+
+.wrapped-picker {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 40px 28px; text-align: center; gap: 6px;
+}
+.wrapped-picker-icon { font-size: 44px; margin-bottom: 8px; }
+.wrapped-picker-title { font-family: var(--wp-font-display); font-size: 22px; font-weight: 700; color: #fff; }
+.wrapped-picker-sub { font-size: 13px; color: rgba(255, 255, 255, 0.65); margin-bottom: 20px; }
+.wrapped-picker-years { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-height: 320px; overflow-y: auto; }
+.wrapped-year-btn {
+  padding: 8px 16px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06); color: #fff; font-size: 14px; font-weight: 600;
+  cursor: pointer; font-family: var(--wp-font-mono);
+}
+.wrapped-year-btn:hover { background: var(--wp-accent); border-color: var(--wp-accent); }
+.wrapped-year-btn-all { background: var(--wp-accent); border-color: var(--wp-accent); order: -1; width: 100%; }
+
+.wrapped-story { flex: 1; display: flex; flex-direction: column; position: relative; }
+.wrapped-progress { display: flex; gap: 4px; padding: 14px 14px 0; }
+.wrapped-progress-seg { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.2); }
+.wrapped-progress-seg.filled { background: #fff; }
+.wrapped-loading { flex: 1; display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.6); font-size: 14px; }
+.wrapped-slide {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 32px 28px; gap: 10px;
+}
+.wrapped-slide-icon { font-size: 40px; line-height: 1; }
+.wrapped-slide-big { font-family: var(--wp-font-display); font-size: 42px; font-weight: 700; color: #fff; line-height: 1.1; word-break: break-word; }
+.wrapped-slide-label { font-size: 15px; color: rgba(255, 255, 255, 0.75); max-width: 300px; }
+.wrapped-tap-zone { position: absolute; top: 60px; bottom: 0; width: 40%; cursor: pointer; }
+.wrapped-tap-left { left: 0; }
+.wrapped-tap-right { right: 0; }
+}

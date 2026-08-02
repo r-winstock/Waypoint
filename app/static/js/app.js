@@ -378,6 +378,7 @@ function waypoint() {
       if (subtab === 'trends' && !this.insightsYearly) this.loadInsightsYearly();
       if (subtab === 'trends' && !this.insightsSeasonality) this.loadInsightsSeasonality();
       if (subtab === 'breakdown' && !this.insightsBreakdown) this.loadInsightsBreakdown();
+      if (subtab === 'life' && !this.lifeCalendar) this.loadLifeCalendar();
     },
 
     // ─── Day ───
@@ -843,6 +844,62 @@ function waypoint() {
         .join(' ');
     },
 
+    // ─── Insights: lifetime odometer (Trends subtab) ───
+    // A running cumulative total over the same per-year series insightsYearly
+    // already loads - no new endpoint needed, this is a pure client-side
+    // transform (running sum) of data already on the page. Always climbing,
+    // never down, unlike the year-over-year chart above it - deliberately
+    // the "how far in total" companion to that chart's "how far this year".
+    insightsOdometerPoints() {
+      let running = 0;
+      return this.insightsYearlyYears().map((y) => {
+        running += y.distance_m;
+        return { year: y.year, total_m: running };
+      });
+    },
+    insightsOdometerMax() {
+      return Math.max(1, ...this.insightsOdometerPoints().map((p) => p.total_m));
+    },
+    insightsOdometerX(index) {
+      const n = this.insightsOdometerPoints().length;
+      return n > 1 ? (index / (n - 1)) * 1000 : 500;
+    },
+    insightsOdometerY(totalM) {
+      return 180 - (totalM / this.insightsOdometerMax()) * 160;
+    },
+    insightsOdometerAreaPath() {
+      const points = this.insightsOdometerPoints();
+      if (!points.length) return '';
+      const top = points.map((p, i) => `${this.insightsOdometerX(i).toFixed(1)},${this.insightsOdometerY(p.total_m).toFixed(1)}`).join(' L ');
+      return `M ${this.insightsOdometerX(0).toFixed(1)},180 L ${top} L ${this.insightsOdometerX(points.length - 1).toFixed(1)},180 Z`;
+    },
+    insightsOdometerLinePath() {
+      return this.insightsOdometerPoints()
+        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${this.insightsOdometerX(i).toFixed(1)},${this.insightsOdometerY(p.total_m).toFixed(1)}`)
+        .join(' ');
+    },
+    insightsOdometerTicks() {
+      const points = this.insightsOdometerPoints();
+      const ticks = points.map((p, i) => ({ x: this.insightsOdometerX(i), label: String(p.year) }));
+      if (ticks.length > 14) {
+        const step = Math.ceil(ticks.length / 10);
+        return ticks.filter((_, i) => i % step === 0);
+      }
+      return ticks;
+    },
+    insightsOdometerPointerMove(evt) {
+      const points = this.insightsOdometerPoints();
+      if (!points.length) return;
+      const rect = evt.currentTarget.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
+      const idx = Math.round(frac * (points.length - 1));
+      this.insightsOdometerHover = { x: this.insightsOdometerX(idx), point: points[idx] };
+    },
+    insightsOdometerPointerLeave() {
+      this.insightsOdometerHover = null;
+    },
+    insightsOdometerHover: null,
+
     // ─── Insights: seasonality (Trends subtab) ───
     // "Which calendar month do you travel most", aggregated across every
     // year of history - an emphasis-form bar chart (the peak month in
@@ -1096,21 +1153,26 @@ function waypoint() {
     heatmapWeeks() {
       if (!this.heatmapData) return [];
       const days = this.heatmapData.days;
-      const max = Math.max(1, ...days.map((d) => d.visit_count));
+      // away_hours (not visit_count) drives intensity - this is a *travel*
+      // heatmap (see app/api/insights.py's own get_insights_heatmap docstring
+      // for why a long single stay needs to read as "away" every day it
+      // spans, not just the handful of days it happened to log a new visit).
+      const max = Math.max(1, ...days.map((d) => d.away_hours));
       const firstDate = new Date(days[0].date + 'T00:00:00');
       const firstWeekday = (firstDate.getDay() + 6) % 7; // Sun=0..Sat=6 -> Mon=0..Sun=6
-      const padded = Array(firstWeekday).fill(null).concat(days.map((d) => ({ ...d, intensity: d.visit_count / max })));
+      const padded = Array(firstWeekday).fill(null).concat(days.map((d) => ({ ...d, intensity: d.away_hours / max })));
       const weeks = [];
       for (let i = 0; i < padded.length; i += 7) weeks.push(padded.slice(i, i + 7));
       return weeks;
     },
     heatmapCellStyle(day) {
-      if (!day || !day.visit_count) return '';
+      if (!day || !day.away_hours) return '';
       return `background: var(--wp-accent); opacity: ${(0.25 + day.intensity * 0.75).toFixed(2)}`;
     },
     heatmapCellTitle(day) {
       if (!day) return '';
-      return `${this.formatDayString(day.date)} · ${day.visit_count} visit${day.visit_count === 1 ? '' : 's'}`;
+      const awayLabel = day.away_hours > 0 ? `${day.away_hours}h away from home` : 'home all day';
+      return `${this.formatDayString(day.date)} · ${awayLabel} · ${day.visit_count} visit${day.visit_count === 1 ? '' : 's'}`;
     },
     // One label per week-column, only on the week a new month actually
     // starts in - matches the GitHub contributions graph's own convention,
@@ -1129,6 +1191,188 @@ function waypoint() {
       if (!day) return;
       this.switchTab('day');
       this.goToDate(day.date);
+    },
+
+    // ─── Insights: life calendar (Life subtab) ───
+    // "Your life in weeks" grid, Tim Urban/Wait But Why style - one row per
+    // year of life, one cell per week, coloured by real away-from-home
+    // fraction rather than a manually-tagged life phase (every commercial
+    // version of this needs the latter; this one draws itself, since
+    // Waypoint's own tracked history goes back decades further than any
+    // phone's own sensors could).
+    lifeCalendar: null,
+    async loadLifeCalendar() {
+      try {
+        const res = await fetch('/api/insights/life-calendar');
+        this.lifeCalendar = await res.json();
+      } catch (e) { console.error('Failed to load life calendar', e); }
+    },
+    // 52 columns (a year's worth of weeks), one row per year of life - the
+    // backend returns a flat list of weeks from birth to now, chunked here
+    // rather than there since this is purely a display grouping, not a
+    // computation the API response shape needs to carry.
+    lifeCalendarRows() {
+      if (!this.lifeCalendar || !this.lifeCalendar.available) return [];
+      const weeks = this.lifeCalendar.weeks;
+      const rows = [];
+      for (let i = 0; i < weeks.length; i += 52) rows.push(weeks.slice(i, i + 52));
+      return rows;
+    },
+    lifeCalendarCellStyle(week) {
+      if (!week || !week.has_data) return '';
+      if (week.away_fraction <= 0) return 'background: var(--wp-surface-3)';
+      return `background: var(--wp-accent); opacity: ${(0.2 + week.away_fraction * 0.8).toFixed(2)}`;
+    },
+    lifeCalendarCellTitle(week) {
+      if (!week) return '';
+      if (!week.has_data) return `Week of ${this.formatDayString(week.start_date)} · before tracking began`;
+      const pct = Math.round(week.away_fraction * 100);
+      return `Week of ${this.formatDayString(week.start_date)} · ${pct > 0 ? pct + '% away from home' : 'home all week'}`;
+    },
+    openLifeCalendarWeek(week) {
+      if (!week || !week.has_data) return;
+      this.switchTab('day');
+      this.goToDate(week.start_date);
+    },
+
+    // ─── Insights: Waypoint Wrapped (full-screen story modal) ───
+    // Spotify-Wrapped-style sequential reveal, either one calendar year or
+    // all-time. Same "structured data in, frontend composes the copy" split
+    // as the Overview stories/hero card - see app/api/insights.py's own
+    // get_insights_wrapped docstring for why the backend never returns a
+    // pre-composed sentence.
+    wrapped: { open: false, mode: 'picker', year: null, slides: null, index: 0, loading: false },
+    openWrapped() {
+      this.wrapped.open = true;
+      this.wrapped.mode = 'picker';
+      this.wrapped.slides = null;
+      this.wrapped.index = 0;
+      if (!this.insightsYearly) this.loadInsightsYearly();
+    },
+    closeWrapped() {
+      this.wrapped.open = false;
+    },
+    wrappedYearOptions() {
+      return this.insightsYearlyYears()
+        .filter((y) => y.distance_m > 0)
+        .map((y) => y.year)
+        .sort((a, b) => b - a);
+    },
+    async startWrapped(year) {
+      this.wrapped.year = year || null;
+      this.wrapped.mode = 'story';
+      this.wrapped.index = 0;
+      this.wrapped.loading = true;
+      this.wrapped.slides = null;
+      try {
+        const url = this.wrapped.year ? `/api/insights/wrapped?year=${this.wrapped.year}` : '/api/insights/wrapped';
+        const res = await fetch(url);
+        const data = await res.json();
+        this.wrapped.slides = data.slides;
+        this.wrappedAnimateSlide();
+      } catch (e) { console.error('Failed to load wrapped', e); }
+      finally { this.wrapped.loading = false; }
+    },
+    wrappedCurrentSlide() {
+      return this.wrapped.slides ? this.wrapped.slides[this.wrapped.index] : null;
+    },
+    wrappedAdvance() {
+      if (!this.wrapped.slides) return;
+      if (this.wrapped.index < this.wrapped.slides.length - 1) {
+        this.wrapped.index++;
+        this.wrappedAnimateSlide();
+      } else {
+        this.closeWrapped();
+      }
+    },
+    wrappedBack() {
+      if (this.wrapped.index > 0) {
+        this.wrapped.index--;
+        this.wrappedAnimateSlide();
+      }
+    },
+    // Ease-out count-up from 0 to the slide's own headline number, purely
+    // cosmetic (Spotify Wrapped's own signature move) - only animates
+    // slides whose value is a real number (bigNum), not the ones with a
+    // fixed string headline (a city name, a mode name) which have nothing
+    // to count up to.
+    wrappedAnimatedValue: 0,
+    wrappedAnimateSlide() {
+      const val = this.wrappedSlideValue(this.wrappedCurrentSlide());
+      if (!val || val.bigNum === undefined) { this.wrappedAnimatedValue = null; return; }
+      const target = val.bigNum;
+      const duration = 900;
+      const start = performance.now();
+      const runIndex = this.wrapped.index;
+      const step = (now) => {
+        if (!this.wrapped.open || this.wrapped.index !== runIndex) return;
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - t, 3);
+        this.wrappedAnimatedValue = target * eased;
+        if (t < 1) requestAnimationFrame(step);
+        else this.wrappedAnimatedValue = target;
+      };
+      requestAnimationFrame(step);
+    },
+    wrappedBigDisplay(slide) {
+      const val = this.wrappedSlideValue(slide);
+      if (!val) return '';
+      if (val.big !== undefined) return val.big;
+      const shown = this.wrappedAnimatedValue ?? 0;
+      if (val.bigFmt === 'miles') return formatMiles(shown);
+      if (val.bigFmt === 'plain') return Math.round(shown).toLocaleString();
+      return '';
+    },
+    wrappedIcon(type) {
+      const icons = {
+        intro: '✨', distance: '🌍', trip_days: '🧳', top_destination: '📍',
+        longest_trip: '🏆', countries: '🗺️', favourite_mode: '🚗', moon_trips: '🌕', closing: '👋',
+      };
+      return icons[type] || '💭';
+    },
+    // Big headline number + smaller supporting label per slide - kept as a
+    // single object (rather than a giant computed x-text expression in the
+    // HTML) so the count-up animation in wrappedSlideBig has one clean
+    // numeric target to animate towards.
+    wrappedSlideValue(slide) {
+      if (!slide) return null;
+      switch (slide.type) {
+        case 'intro':
+          return { big: slide.year ? String(slide.year) : 'All time', label: slide.years_tracked ? `${slide.years_tracked} years tracked` : 'Your journey so far' };
+        case 'distance': {
+          const changeText = (() => {
+            if (slide.prev_distance_m === null || slide.prev_distance_m === undefined || slide.prev_distance_m <= 0) return null;
+            const pct = Math.round(((slide.distance_m - slide.prev_distance_m) / slide.prev_distance_m) * 100);
+            if (pct === 0) return 'same as last year';
+            return pct > 0 ? `up ${pct}% on last year` : `down ${Math.abs(pct)}% on last year`;
+          })();
+          return { bigNum: slide.distance_m, bigFmt: 'miles', label: 'travelled' + (changeText ? ` · ${changeText}` : '') };
+        }
+        case 'trip_days': {
+          const pct = Math.round((slide.days / slide.period_days) * 100);
+          return { bigNum: slide.days, bigFmt: 'plain', label: `days away from home · ${pct}% of the ${slide.period_days > 366 ? 'time' : 'year'}` };
+        }
+        case 'top_destination':
+          return { big: slide.city || slide.country || 'Somewhere new', label: `your top destination${slide.days ? ` · ${slide.days} day${slide.days === 1 ? '' : 's'}` : ''}` };
+        case 'longest_trip':
+          return { big: slide.name || slide.primary_city || slide.primary_country || 'One big trip', label: `your longest trip · ${slide.days} day${slide.days === 1 ? '' : 's'}` };
+        case 'countries': {
+          const newBit = slide.new_countries && slide.new_countries.length
+            ? `${slide.new_countries.length} new: ${slide.new_countries.slice(0, 3).join(', ')}${slide.new_countries.length > 3 ? '…' : ''}`
+            : `${slide.percent_of_world}% of the world`;
+          return { bigNum: slide.count, bigFmt: 'plain', label: `countries visited · ${newBit}` };
+        }
+        case 'favourite_mode':
+          return { big: slide.mode.charAt(0).toUpperCase() + slide.mode.slice(1), label: `your favourite way to travel · ${formatMiles(slide.distance_m)}` };
+        case 'moon_trips': {
+          const trips = (slide.distance_m / 384400000).toFixed(1);
+          return { big: `${trips}×`, label: 'far enough to reach the Moon' };
+        }
+        case 'closing':
+          return { big: '✨', label: 'Here\'s to the next one' };
+        default:
+          return { big: '', label: '' };
+      }
     },
 
     // ─── Places ───
