@@ -47,6 +47,27 @@ MIN_SEGMENT_DISTANCE_M = 20.0
 # flood the Trips view).
 TRIP_MIN_DURATION_S = 6 * 3600
 
+# A gap this long between two consecutive away-classified visits, with both
+# visits still close to home (see HOME_LOCALITY_RADIUS_M), is treated as an
+# implicit overnight return home even with no explicit Home visit logged in
+# between - see _rebuild_trips' away-run loop for why: confirmed live, three
+# separate days of ordinary Bedford errands (school run, supermarket, a
+# shopping centre) got strung into one fabricated three-day "trip" purely
+# because Google's own Timeline export didn't emit an explicit Home visit on
+# two of those three nights, even though the person plainly slept at home
+# each night - nothing else in the data ever told the algorithm they'd gone
+# home in between. Deliberately shorter than a real overnight stay away
+# (hotel checkout the next morning) would need to be treated as a break.
+MAX_AWAY_GAP_S = 8 * 3600
+
+# How far from home still counts as "the same local area" for the overnight-
+# gap rule above - wide enough to cover routine errands a few km out (the
+# Bedford example above topped out around 5.2km) without also covering a
+# genuine day trip or short break to a real, distinct destination. Distinct
+# from a HomePeriod's own (much tighter) radius_m, which exists to separate
+# "at home" from "anywhere else at all", not to define the whole local area.
+HOME_LOCALITY_RADIUS_M = 15_000.0
+
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     r = 6_371_000.0
@@ -367,6 +388,18 @@ def _rebuild_trips(session: Session) -> None:
         .all()
     )
 
+    def _home_period_for(visit: Visit) -> HomePeriod | None:
+        # Unlike _tag_home (any period, ever), this needs the *one* period
+        # that actually covers this visit's own timestamp - the whole point
+        # of HomePeriod is that a visit near an old address should count as
+        # "at home" only while that was genuinely still home, not forever.
+        for period in home_periods:
+            if (period.start_ts is None or visit.start_ts >= period.start_ts) and (
+                period.end_ts is None or visit.start_ts < period.end_ts
+            ):
+                return period
+        return None
+
     def _is_away(visit: Visit) -> bool:
         # A regular workplace is never "away", however far it sits from
         # home - confirmed live this was a real, large problem, not a
@@ -380,28 +413,40 @@ def _rebuild_trips(session: Session) -> None:
         # commute would ever sit *inside* a home radius to begin with.
         if visit.place and visit.place.category == "Work":
             return False
-        # Unlike _tag_home (any period, ever), this needs the *one* period
-        # that actually covers this visit's own timestamp - the whole point
-        # of HomePeriod is that a visit near an old address should count as
-        # "at home" only while that was genuinely still home, not forever.
+        period = _home_period_for(visit)
         # A visit with no covering period at all (before the earliest known
         # home, or in a gap between two) is treated as "not away" rather
         # than guessed at - silently fabricating a trip out of a genuinely
         # unknown-era visit is worse than just leaving it ungrouped.
-        for period in home_periods:
-            if (period.start_ts is None or visit.start_ts >= period.start_ts) and (
-                period.end_ts is None or visit.start_ts < period.end_ts
-            ):
-                return haversine_m(visit.lat, visit.lon, period.lat, period.lon) > period.radius_m
-        return False
+        if period is None:
+            return False
+        return haversine_m(visit.lat, visit.lon, period.lat, period.lon) > period.radius_m
+
+    def _near_home(visit: Visit) -> bool:
+        # Wider than a HomePeriod's own radius_m on purpose - see
+        # HOME_LOCALITY_RADIUS_M for why - and no covering period at all
+        # counts as "not near", same conservative default as _is_away above.
+        period = _home_period_for(visit)
+        return period is not None and haversine_m(visit.lat, visit.lon, period.lat, period.lon) <= HOME_LOCALITY_RADIUS_M
 
     run: list[Visit] = []
     for visit in visits:
-        if _is_away(visit):
-            run.append(visit)
-        else:
+        if not _is_away(visit):
             _flush_trip_run(session, run, corrections)
             run = []
+            continue
+        if run:
+            gap_s = visit.start_ts - run[-1].end_ts
+            # See MAX_AWAY_GAP_S: a long quiet stretch with no visit at all
+            # is ambiguous on its own (asleep at home with nothing logged,
+            # or asleep at a hotel three hundred miles away) - only treat it
+            # as an implicit return home when both the visit before and the
+            # visit after the gap are still close to home, since a genuine
+            # away destination never is.
+            if gap_s > MAX_AWAY_GAP_S and _near_home(run[-1]) and _near_home(visit):
+                _flush_trip_run(session, run, corrections)
+                run = []
+        run.append(visit)
     _flush_trip_run(session, run, corrections)
 
     # photo_import visits: one visit = one trip, each flushed on its own
