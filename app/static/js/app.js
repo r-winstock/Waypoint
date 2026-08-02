@@ -377,8 +377,14 @@ function waypoint() {
       this.insights.subtab = subtab;
       if (subtab === 'trends' && !this.insightsYearly) this.loadInsightsYearly();
       if (subtab === 'trends' && !this.insightsSeasonality) this.loadInsightsSeasonality();
+      if (subtab === 'trends' && !this.modeShareData) this.loadModeShare();
+      if (subtab === 'trends' && !this.weekdayPatternData) this.loadWeekdayPattern();
+      if (subtab === 'trends' && !this.tripScatterData) this.loadTripScatter();
       if (subtab === 'breakdown' && !this.insightsBreakdown) this.loadInsightsBreakdown();
+      if (subtab === 'breakdown' && !this.destinationConcentration) this.loadDestinationConcentration();
+      if (subtab === 'records' && !this.insightsStreaks) this.loadInsightsStreaks();
       if (subtab === 'life' && !this.lifeCalendar) this.loadLifeCalendar();
+      if (subtab === 'life' && !this.decadeOfLife) this.loadDecadeOfLife();
     },
 
     // ─── Day ───
@@ -697,6 +703,15 @@ function waypoint() {
       return `var(--wp-cat-${key})`;
     },
 
+    // ─── Insights: away/home streak records (Records subtab) ───
+    insightsStreaks: null,
+    async loadInsightsStreaks() {
+      try {
+        const res = await fetch('/api/insights/streaks');
+        this.insightsStreaks = await res.json();
+      } catch (e) { console.error('Failed to load streaks', e); }
+    },
+
     // ─── Insights: all-time highlights + activity heatmap ───
     // Not scoped to insights.year/month - these are all-time records, loaded
     // once (like day.overview) rather than re-fetched on every month change.
@@ -942,6 +957,172 @@ function waypoint() {
       return '🍂';
     },
 
+    // ─── Insights: mode-share evolution (Trends subtab) ───
+    // Stacked-area % of distance by travel mode, per year - shows how the
+    // *mix* of how you travel has shifted, not just the yearly total the
+    // odometer/year-over-year charts above already cover. Fixed known mode
+    // list (MODE_SHARE_ORDER, same order as TRAVEL_MODE_ORDER server-side)
+    // with one hardcoded <path> per mode in the HTML rather than a
+    // <template x-for> inside the <svg> - see the Day/Trends history
+    // charts' own comments elsewhere in this file on why x-for doesn't
+    // reliably work in SVG context here; a fixed, small, known set of
+    // modes (11) makes hardcoding each one the simplest robust option.
+    modeShareData: null,
+    async loadModeShare() {
+      try {
+        const res = await fetch('/api/insights/mode-share');
+        this.modeShareData = await res.json();
+      } catch (e) { console.error('Failed to load mode share', e); }
+    },
+    modeShareYears() {
+      return (this.modeShareData && this.modeShareData.years) || [];
+    },
+    modeSharePresent(mode) {
+      return !!(this.modeShareData && this.modeShareData.modes.includes(mode));
+    },
+    modeShareX(index) {
+      const n = this.modeShareYears().length;
+      return n > 1 ? (index / (n - 1)) * 1000 : 500;
+    },
+    modeShareY(pct) {
+      return 240 - pct * 2.4; // viewBox is 0-1000 x 0-240, 0-100% maps to the full height
+    },
+    // Cumulative bottom/top of this mode's own band, stacking in a fixed
+    // order (MODE_SHARE_ORDER) so the same mode always occupies the same
+    // relative position in the stack regardless of which other modes have
+    // data for a given user.
+    modeShareStackFor(mode) {
+      const order = ['walking', 'cycling', 'driving', 'taxi', 'bus', 'train', 'subway', 'tram', 'ferry', 'boating', 'flying'];
+      const idx = order.indexOf(mode);
+      return this.modeShareYears().map((y) => {
+        let bottom = 0, top = 0;
+        for (let i = 0; i <= idx; i++) {
+          const share = (y.shares && y.shares[order[i]]) || 0;
+          if (i < idx) bottom += share;
+          top += share;
+        }
+        return { bottom, top };
+      });
+    },
+    modeShareAreaPath(mode) {
+      const years = this.modeShareYears();
+      if (!years.length) return '';
+      const stack = this.modeShareStackFor(mode);
+      const top = stack.map((s, i) => `${this.modeShareX(i).toFixed(1)},${this.modeShareY(s.top).toFixed(1)}`).join(' L ');
+      const bottom = stack.slice().reverse().map((s, i) => {
+        const realIdx = stack.length - 1 - i;
+        return `${this.modeShareX(realIdx).toFixed(1)},${this.modeShareY(stack[realIdx].bottom).toFixed(1)}`;
+      }).join(' L ');
+      return `M ${top} L ${bottom} Z`;
+    },
+    modeShareTicks() {
+      const years = this.modeShareYears();
+      const ticks = years.map((y, i) => ({ x: this.modeShareX(i), label: String(y.year) }));
+      if (ticks.length > 14) {
+        const step = Math.ceil(ticks.length / 10);
+        return ticks.filter((_, i) => i % step === 0);
+      }
+      return ticks;
+    },
+
+    // ─── Insights: weekday departure/return pattern (Trends subtab) ───
+    weekdayPatternData: null,
+    async loadWeekdayPattern() {
+      try {
+        const res = await fetch('/api/insights/weekday-pattern');
+        this.weekdayPatternData = await res.json();
+      } catch (e) { console.error('Failed to load weekday pattern', e); }
+    },
+    // Monday-first display order, matching the activity heatmap's own
+    // weekday convention - the API returns SQLite's own strftime('%w')
+    // order (Sunday=0), reordered here purely for display.
+    weekdayPatternDays() {
+      if (!this.weekdayPatternData) return [];
+      const bySunFirst = this.weekdayPatternData.days;
+      const order = [1, 2, 3, 4, 5, 6, 0];
+      const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return order.map((w, i) => ({ ...bySunFirst[w], label: labels[i] }));
+    },
+    weekdayPatternMax() {
+      return Math.max(1, ...this.weekdayPatternDays().flatMap((d) => [d.departures, d.returns]));
+    },
+    weekdayPatternPeakDeparture() {
+      const days = this.weekdayPatternDays();
+      if (!days.length) return null;
+      return days.reduce((a, b) => (b.departures > a.departures ? b : a), days[0]);
+    },
+
+    // ─── Insights: trip duration vs distance scatter (Trends subtab) ───
+    // Every trip plotted as one point - x is duration (days), y is total
+    // distance covered. Answers "do my longest trips actually cover the
+    // most ground" at a glance, which no other Insights view shows (the
+    // Records tab has single all-time bests for each measure separately,
+    // never both together for every trip at once).
+    tripScatterData: null,
+    async loadTripScatter() {
+      try {
+        const res = await fetch('/api/insights/trip-scatter');
+        this.tripScatterData = await res.json();
+      } catch (e) { console.error('Failed to load trip scatter', e); }
+    },
+    tripScatterPoints() {
+      return (this.tripScatterData && this.tripScatterData.points) || [];
+    },
+    tripScatterMaxDays() {
+      return Math.max(1, ...this.tripScatterPoints().map((p) => p.days));
+    },
+    tripScatterMaxDistance() {
+      return Math.max(1, ...this.tripScatterPoints().map((p) => p.distance_m));
+    },
+    // Square-root scale on the x axis (days) - trip length is heavily
+    // right-skewed (many 1-3 day trips, a handful of multi-week ones), and
+    // a linear scale crushes every short trip into the first few percent of
+    // the chart's width. Distance (y) doesn't need the same treatment -
+    // confirmed live it isn't anywhere near as skewed once the x axis alone
+    // is fixed.
+    tripScatterX(days) {
+      return (Math.sqrt(days) / Math.sqrt(this.tripScatterMaxDays())) * 960 + 20;
+    },
+    tripScatterY(distanceM) {
+      return 220 - (distanceM / this.tripScatterMaxDistance()) * 200;
+    },
+    // One static path of small circles (same "path of dots" technique as
+    // insightsYearlyDotsPath) rather than a <template x-for> inside the
+    // <svg> - dots-per-trip can run into the hundreds, well past what
+    // Alpine's SVG limitation here would tolerate even if it did work.
+    tripScatterDotsPath() {
+      const r = 3.5;
+      return this.tripScatterPoints()
+        .map((p) => {
+          const x = this.tripScatterX(p.days);
+          const y = this.tripScatterY(p.distance_m);
+          return `M ${(x - r).toFixed(1)},${y.toFixed(1)} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 ${-r * 2},0`;
+        })
+        .join(' ');
+    },
+    tripScatterHover: null,
+    tripScatterPointerMove(evt) {
+      const points = this.tripScatterPoints();
+      if (!points.length) return;
+      const rect = evt.currentTarget.getBoundingClientRect();
+      const px = ((evt.clientX - rect.left) / rect.width) * 1000;
+      const py = ((evt.clientY - rect.top) / rect.height) * 240;
+      let best = null, bestDist = Infinity;
+      for (const p of points) {
+        const dx = this.tripScatterX(p.days) - px;
+        const dy = this.tripScatterY(p.distance_m) - py;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; best = p; }
+      }
+      // 400 = 20px hit-radius squared, in viewBox units - beyond that,
+      // treat it as hovering empty chart space rather than always
+      // snapping to whichever point happens to be nearest.
+      this.tripScatterHover = bestDist < 400 ? best : null;
+    },
+    tripScatterPointerLeave() {
+      this.tripScatterHover = null;
+    },
+
     // ─── Insights: all-time breakdown (Breakdown subtab) ───
     // Same underlying totals the month-scoped tiles below already show,
     // just summed across the whole of history instead of one month - a
@@ -974,6 +1155,19 @@ function waypoint() {
     },
     insightsBreakdownVisitsMax() {
       return Math.max(1, ...this.insightsBreakdownVisitsSorted().map((v) => v.duration_s));
+    },
+
+    // ─── Insights: destination concentration (Breakdown subtab) ───
+    // What share of every trip goes to just the top 5 destinations - "am I
+    // mostly exploring, or mostly going back to the same favourites" - a
+    // distribution measure, distinct from Records' single all-time-best
+    // most_visited_place/city.
+    destinationConcentration: null,
+    async loadDestinationConcentration() {
+      try {
+        const res = await fetch('/api/insights/destination-concentration');
+        this.destinationConcentration = await res.json();
+      } catch (e) { console.error('Failed to load destination concentration', e); }
     },
 
     // ─── Insights: "did you know" story card (Overview subtab hero) ───
@@ -1233,6 +1427,33 @@ function waypoint() {
       if (!week || !week.has_data) return;
       this.switchTab('day');
       this.goToDate(week.start_date);
+    },
+
+    // ─── Insights: decade-of-life breakdown (Life subtab) ───
+    // "Which decade of your life were you most adventurous" - the same
+    // birth_date-gated data source as the Life Calendar above it, but
+    // grouped into 10-year age bands instead of individual weeks.
+    decadeOfLife: null,
+    async loadDecadeOfLife() {
+      try {
+        const res = await fetch('/api/insights/decade-of-life');
+        this.decadeOfLife = await res.json();
+      } catch (e) { console.error('Failed to load decade of life', e); }
+    },
+    decadeOfLifeDecades() {
+      return (this.decadeOfLife && this.decadeOfLife.decades) || [];
+    },
+    decadeOfLifeMax() {
+      return Math.max(1, ...this.decadeOfLifeDecades().map((d) => d.distance_m));
+    },
+    decadeOfLifeBarWidth(d) {
+      return Math.max(2, (d.distance_m / this.decadeOfLifeMax()) * 100);
+    },
+    decadeOfLifePeak() {
+      const decades = this.decadeOfLifeDecades();
+      if (!decades.length) return null;
+      const peak = decades.reduce((a, b) => (b.distance_m > a.distance_m ? b : a), decades[0]);
+      return peak.distance_m > 0 ? peak : null;
     },
 
     // ─── Insights: Waypoint Wrapped (full-screen story modal) ───

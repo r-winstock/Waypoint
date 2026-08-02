@@ -346,6 +346,10 @@ h1, h2, h3, .display {
    a many-slice donut - see the dataviz skill's series-count ladder) ─── */
 .rank-bars { display: flex; flex-direction: column; gap: 10px; }
 .rank-bar-row { display: grid; grid-template-columns: 28px 120px 1fr 70px; align-items: center; gap: 10px; }
+/* No icon badge - a city name or an age band has no natural icon the way a
+   travel mode or place category does - drops the 28px icon column rather
+   than leaving it an empty gap. */
+.rank-bar-row.no-icon { grid-template-columns: 120px 1fr 70px; }
 .rank-bar-icon {
   width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -707,4 +711,19 @@ h1, h2, h3, .display {
 .wrapped-tap-zone { position: absolute; top: 60px; bottom: 0; width: 40%; cursor: pointer; }
 .wrapped-tap-left { left: 0; }
 .wrapped-tap-right { right: 0; }
-}
+
+/* Small colour-key swatch, shared by the mode-share chart's legend and the
+   weekday-pattern chart's departures/returns key - a plain coloured square,
+   deliberately simpler than life-calendar-legend-swatch (which needs its
+   own border for the "no data" transparent case). */
+.legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+/* ─── Weekday departure/return pattern (Trends subtab) ───
+   Grouped bars, same overall shape as .seasonality-chart above it in the
+   same subtab, but two bars per column (departures/returns) instead of one. */
+.weekday-pattern-chart { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding: 0 4px; }
+.weekday-pattern-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.weekday-pattern-bars { display: flex; align-items: flex-end; gap: 2px; height: 100%; width: 100%; justify-content: center; }
+.weekday-pattern-bar { width: 40%; border-radius: 2px 2px 0 0; }
+.weekday-pattern-bar-departures { background: var(--wp-accent); }
+.weekday-pattern-bar-returns { background: var(--wp-fg-faint); }

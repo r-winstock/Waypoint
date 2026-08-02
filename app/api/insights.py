@@ -1279,6 +1279,210 @@ def get_insights_wrapped(year: int | None = None, session: Session = Depends(db_
     return {"year": year, "slides": slides}
 
 
+# Life expectancy at roughly the year granularity is close enough for a
+# "decade of life" grouping - a leap-year-aware exact calendar age isn't
+# worth the extra complexity for a chart whose whole point is comparing
+# decade-scale buckets, not exact days.
+YEAR_S = 365.25 * 86400
+
+
+@router.get("/api/insights/mode-share")
+def get_insights_mode_share(session: Session = Depends(db_dependency)):
+    """Per-year % share of total distance by travel mode - shows how the
+    *mix* of how you travel has shifted over time (started flying more
+    after a particular year, stopped commuting by car, whatever the real
+    pattern is), which the plain yearly-total Trends chart can't show on
+    its own since it only ever sums across every mode together."""
+    year_expr = func.strftime("%Y", TripSegment.start_ts, "unixepoch")
+    rows = (
+        session.query(year_expr.label("year"), TripSegment.mode, func.sum(TripSegment.distance_m))
+        .group_by("year", TripSegment.mode)
+        .all()
+    )
+    if not rows:
+        return {"years": [], "modes": []}
+
+    by_year: dict[int, dict[str, float]] = defaultdict(dict)
+    for year, mode, distance_m in rows:
+        by_year[int(year)][mode] = distance_m
+
+    modes_present = sorted(
+        {m for year_modes in by_year.values() for m in year_modes},
+        key=lambda m: TRAVEL_MODE_ORDER.index(m) if m in TRAVEL_MODE_ORDER else len(TRAVEL_MODE_ORDER),
+    )
+    first_year, last_year = min(by_year), max(by_year)
+    years = []
+    for y in range(first_year, last_year + 1):
+        modes_this_year = by_year.get(y, {})
+        total = sum(modes_this_year.values())
+        years.append(
+            {
+                "year": y,
+                "total_distance_m": total,
+                "shares": {m: round(modes_this_year.get(m, 0.0) / total * 100, 2) if total else 0.0 for m in modes_present},
+            }
+        )
+    return {"years": years, "modes": modes_present}
+
+
+@router.get("/api/insights/decade-of-life")
+def get_insights_decade_of_life(session: Session = Depends(db_dependency)):
+    """Distance/trip-days grouped by decade of life (20s, 30s, 40s...) using
+    birth_date - "which decade of your life were you the most adventurous",
+    a genuinely different cut from the calendar-year Trends chart (that one
+    measures *when* you travelled; this measures *how old you were*)."""
+    birth_date_str = get_setting(session, "birth_date", "")
+    if not birth_date_str:
+        return {"available": False, "decades": []}
+    try:
+        birth_ts = int(datetime.strptime(birth_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        return {"available": False, "decades": []}
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    decade_s = 10 * YEAR_S
+
+    trip_rows = session.query(Trip.start_ts, Trip.end_ts).all()
+    segment_rows = session.query(TripSegment.start_ts, TripSegment.distance_m).all()
+
+    distance_by_decade: dict[int, float] = defaultdict(float)
+    for ts, distance_m in segment_rows:
+        idx = int((ts - birth_ts) // decade_s)
+        if idx >= 0:
+            distance_by_decade[idx] += distance_m
+
+    max_idx = int((now_ts - birth_ts) // decade_s)
+    decades = []
+    for idx in range(max_idx + 1):
+        d_start_ts = birth_ts + idx * decade_s
+        d_end_ts = birth_ts + (idx + 1) * decade_s
+        trip_days = sum(
+            (min(t_end, d_end_ts) - max(t_start, d_start_ts) + 86399) // 86400
+            for t_start, t_end in trip_rows
+            if min(t_end, d_end_ts) > max(t_start, d_start_ts)
+        )
+        decades.append(
+            {
+                "age_start": idx * 10,
+                "age_end": idx * 10 + 9,
+                "distance_m": distance_by_decade.get(idx, 0.0),
+                "trip_days": trip_days,
+            }
+        )
+
+    return {"available": True, "decades": decades}
+
+
+@router.get("/api/insights/streaks")
+def get_insights_streaks(session: Session = Depends(db_dependency)):
+    """Away/home streak records. "Longest ever away" is just the longest
+    single Trip's own span (that's the whole definition of a Trip - see its
+    own model docstring) and "longest ever home" is the biggest gap between
+    two consecutive trips - both already power get_insights_highlights'
+    longest_trip/longest_gap_days, recomputed here rather than imported
+    since this endpoint packages them differently (paired with which one
+    you're *currently* in the middle of, which highlights doesn't compute
+    at all)."""
+    trip_rows = session.query(Trip.start_ts, Trip.end_ts).order_by(Trip.start_ts).all()
+    if not trip_rows:
+        return {"available": False}
+
+    longest_away_row = max(trip_rows, key=lambda t: t[1] - t[0])
+    longest_away_days = round((longest_away_row[1] - longest_away_row[0]) / 86400)
+
+    gaps = [b_start - a_end for (_, a_end), (b_start, _) in zip(trip_rows, trip_rows[1:])]
+    longest_home_days = round(max(gaps) / 86400) if gaps else None
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    last_start, last_end = trip_rows[-1]
+    if last_end >= now_ts:
+        current_streak_type, current_streak_days = "away", round((now_ts - last_start) / 86400)
+    else:
+        current_streak_type, current_streak_days = "home", round((now_ts - last_end) / 86400)
+
+    return {
+        "available": True,
+        "longest_away_days": longest_away_days,
+        "longest_home_days": longest_home_days,
+        "current_streak_type": current_streak_type,
+        "current_streak_days": current_streak_days,
+    }
+
+
+@router.get("/api/insights/weekday-pattern")
+def get_insights_weekday_pattern(session: Session = Depends(db_dependency)):
+    """Which day of the week trips typically start and end on - a genuinely
+    different cut from every other Insights view, none of which look at
+    day-of-week at all. weekday follows SQLite's own strftime('%w') scale:
+    0=Sunday..6=Saturday."""
+    dep_expr = func.strftime("%w", Trip.start_ts, "unixepoch")
+    ret_expr = func.strftime("%w", Trip.end_ts, "unixepoch")
+    dep_rows = dict(session.query(dep_expr.label("d"), func.count(Trip.id)).group_by("d").all())
+    ret_rows = dict(session.query(ret_expr.label("d"), func.count(Trip.id)).group_by("d").all())
+    days = [
+        {"weekday": i, "departures": dep_rows.get(str(i), 0), "returns": ret_rows.get(str(i), 0)} for i in range(7)
+    ]
+    return {"days": days}
+
+
+@router.get("/api/insights/destination-concentration")
+def get_insights_destination_concentration(session: Session = Depends(db_dependency)):
+    """What share of all trips go to just your top handful of destinations -
+    a concentration ("Pareto") measure of how much of your travel is
+    genuinely new versus the same favourite few places. Records' own
+    most_visited_place/city are single all-time bests, not a *distribution*
+    measure - this is the one place in Insights that answers "am I mostly
+    exploring, or mostly going back to the same handful of favourites"."""
+    total_trips = session.query(func.count(Trip.id)).scalar() or 0
+    if not total_trips:
+        return {"available": False}
+    city_counts = (
+        session.query(Trip.primary_city, func.count(Trip.id).label("cnt"))
+        .filter(Trip.primary_city.isnot(None))
+        .group_by(Trip.primary_city)
+        .order_by(func.count(Trip.id).desc())
+        .limit(5)
+        .all()
+    )
+    top5_trips = sum(c.cnt for c in city_counts)
+    return {
+        "available": True,
+        "total_trips": total_trips,
+        "top5_trips": top5_trips,
+        "top5_percent": round(top5_trips / total_trips * 100, 1),
+        "top_cities": [{"city": c.primary_city, "trip_count": c.cnt} for c in city_counts],
+    }
+
+
+@router.get("/api/insights/trip-scatter")
+def get_insights_trip_scatter(session: Session = Depends(db_dependency)):
+    """Every trip's duration vs. total distance covered - do the longest
+    trips actually cover the most ground, or are some long trips short-hop-
+    long-relax (little further travel once you arrive) while some short
+    trips are a single huge long-haul leg? Distance per trip isn't stored
+    anywhere directly (TripSegment has no trip_id - see its own model
+    docstring for why), so this sums each trip's own segments by time-
+    overlap, the same convention get_insights_wrapped's own top_destination/
+    longest_trip slides already use."""
+    trips = session.query(Trip.id, Trip.start_ts, Trip.end_ts, Trip.primary_city, Trip.primary_country, Trip.name).all()
+    segments = session.query(TripSegment.start_ts, TripSegment.distance_m).all()
+
+    points = []
+    for t in trips:
+        distance_m = sum(dm for ts, dm in segments if t.start_ts <= ts < t.end_ts)
+        days = round((t.end_ts - t.start_ts) / 86400, 1)
+        if distance_m > 0 and days > 0:
+            points.append(
+                {
+                    "trip_id": t.id,
+                    "days": days,
+                    "distance_m": distance_m,
+                    "label": t.name or t.primary_city or t.primary_country,
+                }
+            )
+    return {"points": points}
+
+
 @router.get("/api/insights/{year}/{month}")
 def get_insights(year: int, month: int, session: Session = Depends(db_dependency)):
     start_ts, end_ts = _month_bounds(year, month)

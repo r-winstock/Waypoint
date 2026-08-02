@@ -681,6 +681,44 @@
           </div>
         </div>
 
+        <!-- Mode-share evolution: stacked area of % distance by travel mode,
+             per year - how the *mix* of how you travel has shifted, not
+             just the yearly total the two charts above already show. One
+             hardcoded <path> per known mode (not a <template x-for> inside
+             the <svg> - see this file's other history charts for why),
+             hidden via x-show when a user has no data for that mode. -->
+        <div class="mb-6 history-chart-card">
+          <div class="text-xs flex items-center gap-1 mb-1" style="color: var(--wp-fg-dim)"><span>🧩</span> How your travel mix has changed</div>
+          <div style="position: relative">
+            <svg viewBox="0 0 1000 240" preserveAspectRatio="none" class="history-chart" style="cursor: default">
+              <path x-show="modeSharePresent('walking')" :d="modeShareAreaPath('walking')" :style="`fill: var(--wp-mode-walking)`"></path>
+              <path x-show="modeSharePresent('cycling')" :d="modeShareAreaPath('cycling')" :style="`fill: var(--wp-mode-cycling)`"></path>
+              <path x-show="modeSharePresent('driving')" :d="modeShareAreaPath('driving')" :style="`fill: var(--wp-mode-driving)`"></path>
+              <path x-show="modeSharePresent('taxi')" :d="modeShareAreaPath('taxi')" :style="`fill: var(--wp-mode-taxi)`"></path>
+              <path x-show="modeSharePresent('bus')" :d="modeShareAreaPath('bus')" :style="`fill: var(--wp-mode-bus)`"></path>
+              <path x-show="modeSharePresent('train')" :d="modeShareAreaPath('train')" :style="`fill: var(--wp-mode-train)`"></path>
+              <path x-show="modeSharePresent('subway')" :d="modeShareAreaPath('subway')" :style="`fill: var(--wp-mode-subway)`"></path>
+              <path x-show="modeSharePresent('tram')" :d="modeShareAreaPath('tram')" :style="`fill: var(--wp-mode-tram)`"></path>
+              <path x-show="modeSharePresent('ferry')" :d="modeShareAreaPath('ferry')" :style="`fill: var(--wp-mode-ferry)`"></path>
+              <path x-show="modeSharePresent('boating')" :d="modeShareAreaPath('boating')" :style="`fill: var(--wp-mode-boating)`"></path>
+              <path x-show="modeSharePresent('flying')" :d="modeShareAreaPath('flying')" :style="`fill: var(--wp-mode-flying)`"></path>
+            </svg>
+            <div class="history-chart-axis" style="position: absolute; left: 0; right: 0; bottom: 0; height: 16px; pointer-events: none">
+              <template x-for="tick in modeShareTicks()" :key="tick.label">
+                <span class="history-chart-axis-label" :style="`position:absolute; left:${tick.x / 10}%; transform:translateX(-50%)`" x-text="tick.label"></span>
+              </template>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-3 mt-2">
+            <template x-for="mode in (modeShareData ? modeShareData.modes : [])" :key="mode">
+              <div class="flex items-center gap-1 text-xs" style="color: var(--wp-fg-dim)">
+                <span class="legend-swatch" :style="`background: var(--wp-mode-${mode})`"></span>
+                <span class="capitalize" x-text="mode"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+
         <div class="mb-2">
           <div class="text-base font-semibold flex items-center gap-2" x-show="insightsSeasonalityPeakMonth()">
             <span>☀️</span>
@@ -697,6 +735,50 @@
               <div class="seasonality-bar-label" x-text="monthName(m.month, true)"></div>
             </div>
           </template>
+        </div>
+
+        <!-- Weekday departure/return pattern - which day of the week trips
+             actually start and end on. Grouped bars (departures vs returns)
+             rather than a single series, since the two questions ("when do
+             I leave" / "when do I get back") can have genuinely different
+             answers (e.g. always leaving Friday, trickling back any day). -->
+        <div class="mb-2">
+          <div class="text-base font-semibold flex items-center gap-2" x-show="weekdayPatternPeakDeparture()">
+            <span>🗓️</span>
+            <span x-text="weekdayPatternPeakDeparture() ? ('You most often set off on a ' + weekdayPatternPeakDeparture().label + 'day') : ''"></span>
+          </div>
+        </div>
+        <div class="weekday-pattern-chart mb-6">
+          <template x-for="d in weekdayPatternDays()" :key="d.label">
+            <div class="weekday-pattern-col">
+              <div class="weekday-pattern-bars">
+                <div class="weekday-pattern-bar weekday-pattern-bar-departures" :style="`height: ${Math.max(2, d.departures / weekdayPatternMax() * 100)}px`" :title="`${d.departures} departures`"></div>
+                <div class="weekday-pattern-bar weekday-pattern-bar-returns" :style="`height: ${Math.max(2, d.returns / weekdayPatternMax() * 100)}px`" :title="`${d.returns} returns`"></div>
+              </div>
+              <div class="seasonality-bar-label" x-text="d.label"></div>
+            </div>
+          </template>
+        </div>
+        <div class="flex gap-3 mb-6 text-xs" style="color: var(--wp-fg-dim)">
+          <div class="flex items-center gap-1"><span class="legend-swatch" style="background: var(--wp-accent)"></span> departures</div>
+          <div class="flex items-center gap-1"><span class="legend-swatch" style="background: var(--wp-fg-faint)"></span> returns</div>
+        </div>
+
+        <!-- Trip duration vs distance scatter - do the longest trips
+             actually cover the most ground? x is duration on a sqrt scale
+             (trip length is heavily right-skewed - see tripScatterX's own
+             comment), y is total distance covered. -->
+        <div class="mb-6 history-chart-card">
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-xs flex items-center gap-1" style="color: var(--wp-fg-dim)"><span>🔍</span> Every trip: duration vs. distance covered</div>
+            <div class="text-xs font-medium tabular" style="color: var(--wp-accent-light); min-height: 15px"
+                 x-show="tripScatterHover" x-text="tripScatterHover && (tripScatterHover.label || 'Trip') + ' · ' + tripScatterHover.days + 'd · ' + formatMiles(tripScatterHover.distance_m)"></div>
+          </div>
+          <svg viewBox="0 0 1000 240" preserveAspectRatio="none" class="history-chart"
+               @pointermove="tripScatterPointerMove($event)" @pointerleave="tripScatterPointerLeave()">
+            <path :d="tripScatterDotsPath()" class="history-chart-point-dot" style="opacity: 0.55"></path>
+          </svg>
+          <div class="text-xs mt-1" style="color: var(--wp-fg-faint)">← shorter trips · longer trips →</div>
         </div>
       </div>
 
@@ -736,6 +818,31 @@
             </div>
           </template>
         </div>
+
+        <!-- Destination concentration - "am I mostly exploring, or mostly
+             going back to the same favourites" - a distribution measure,
+             distinct from Records' single all-time most_visited_place/city. -->
+        <template x-if="destinationConcentration && destinationConcentration.available">
+          <div class="mb-6">
+            <h2 class="text-base font-semibold mb-2">Where your trips actually go</h2>
+            <div class="stat-tile mb-3">
+              <div class="label">Your top 5 destinations account for</div>
+              <div class="value" style="font-size: 26px" x-text="destinationConcentration.top5_percent + '% of every trip'"></div>
+              <div class="detail" x-text="destinationConcentration.top5_trips + ' of ' + destinationConcentration.total_trips + ' trips'"></div>
+            </div>
+            <div class="rank-bars">
+              <template x-for="c in destinationConcentration.top_cities" :key="c.city">
+                <div class="rank-bar-row no-icon">
+                  <div class="rank-bar-label" x-text="c.city"></div>
+                  <div class="rank-bar-track">
+                    <div class="rank-bar-fill" :style="`width: ${(c.trip_count / destinationConcentration.top_cities[0].trip_count * 100).toFixed(1)}%; background: var(--wp-accent)`"></div>
+                  </div>
+                  <div class="rank-bar-value tabular" x-text="c.trip_count + ' trip' + (c.trip_count === 1 ? '' : 's')"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
 
         <div class="flex items-center justify-between mb-4">
           <button class="btn-icon" @click="changeMonth(-1)"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
@@ -804,6 +911,38 @@
 
       <!-- ─── Records ─── -->
       <div x-show="insights.subtab==='records'">
+        <template x-if="insightsStreaks && insightsStreaks.available">
+          <div class="mb-5">
+            <h2 class="text-base font-semibold mb-2">Streaks</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div class="stat-tile record-card">
+                <div class="record-card-head">
+                  <div class="record-icon" :style="`background: ${insightsStreaks.current_streak_type === 'away' ? 'var(--wp-accent)' : 'var(--wp-cat-home)'}`">
+                    <span x-text="insightsStreaks.current_streak_type === 'away' ? '🧳' : '🏠'"></span>
+                  </div>
+                  <div class="label" x-text="insightsStreaks.current_streak_type === 'away' ? 'Currently away' : 'Currently at home'"></div>
+                </div>
+                <div class="value tabular" x-text="insightsStreaks.current_streak_days + ' day' + (insightsStreaks.current_streak_days === 1 ? '' : 's')"></div>
+              </div>
+              <div class="stat-tile record-card">
+                <div class="record-card-head">
+                  <div class="record-icon" style="background: var(--wp-accent)"><span>🧳</span></div>
+                  <div class="label">Longest ever away</div>
+                </div>
+                <div class="value tabular" x-text="insightsStreaks.longest_away_days + ' day' + (insightsStreaks.longest_away_days === 1 ? '' : 's')"></div>
+              </div>
+              <template x-if="insightsStreaks.longest_home_days !== null">
+                <div class="stat-tile record-card">
+                  <div class="record-card-head">
+                    <div class="record-icon" style="background: var(--wp-cat-home)"><span>🏠</span></div>
+                    <div class="label">Longest ever at home</div>
+                  </div>
+                  <div class="value tabular" x-text="insightsStreaks.longest_home_days + ' day' + (insightsStreaks.longest_home_days === 1 ? '' : 's')"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
         <template x-if="insightsHighlights">
           <div>
             <h2 class="text-base font-semibold mb-2">Trips</h2>
@@ -1156,6 +1295,26 @@
               <div class="life-calendar-legend-swatch" style="background: transparent; border: 1px dashed var(--wp-border)"></div>
               <span>before tracking began</span>
             </div>
+
+            <!-- Decade-of-life: same birth_date-gated data, grouped into
+                 10-year age bands instead of individual weeks - "which
+                 decade of your life were you most adventurous". -->
+            <template x-if="decadeOfLifeDecades().length">
+              <div class="mt-6">
+                <h2 class="text-base font-semibold mb-2" x-show="decadeOfLifePeak()" x-text="decadeOfLifePeak() ? ('Your ' + decadeOfLifePeak().age_start + 's were your most adventurous decade') : ''"></h2>
+                <div class="rank-bars">
+                  <template x-for="d in decadeOfLifeDecades()" :key="d.age_start">
+                    <div class="rank-bar-row no-icon">
+                      <div class="rank-bar-label tabular" x-text="d.age_start + '-' + d.age_end"></div>
+                      <div class="rank-bar-track">
+                        <div class="rank-bar-fill" :style="`width: ${decadeOfLifeBarWidth(d)}%; background: var(--wp-accent)`"></div>
+                      </div>
+                      <div class="rank-bar-value tabular" x-text="formatMiles(d.distance_m)"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
           </div>
         </template>
         <template x-if="lifeCalendar && !lifeCalendar.available">
