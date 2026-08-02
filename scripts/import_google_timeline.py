@@ -18,9 +18,19 @@ Usage:
 Run against a fresh/empty database - it does not de-duplicate against
 existing rows, so running it twice against the same database double-imports
 everything.
+
+--since YYYY-MM-DD restricts the import to segments starting on/after that
+date - added specifically for backfilling a recent tracking gap (a phone
+that stopped reporting to OwnTracks for a stretch, recovered separately in
+Google's own Timeline) without re-running the full historical import and
+duplicating years of already-imported data. A fresh on-device Timeline
+export still contains the user's whole retained history, not just new
+segments, so filtering here (before any row is written) is what keeps a
+gap-backfill safe to run against a live, already-populated database.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from datetime import datetime
@@ -119,7 +129,7 @@ def import_activity(session, seg: dict) -> bool:
     return True
 
 
-def run(json_path: Path) -> None:
+def run(json_path: Path, since_ts: int | None = None) -> None:
     init_db()
     session = SessionLocal()
     visits = segments = skipped = 0
@@ -128,6 +138,15 @@ def run(json_path: Path) -> None:
     try:
         with open(json_path, "rb") as f:
             for seg in ijson.items(f, "semanticSegments.item"):
+                # --since filtering happens before anything else, on the raw
+                # segment's own startTime - a segment entirely before the
+                # requested window is silently ignored (not counted as
+                # "skipped", which is reserved for genuinely malformed/
+                # unclassifiable segments within the window being imported).
+                if since_ts is not None:
+                    start_time = seg.get("startTime")
+                    if start_time and parse_ts(start_time) < since_ts:
+                        continue
                 try:
                     if "visit" in seg:
                         ok = import_visit(session, seg)
@@ -177,7 +196,16 @@ def run(json_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <path-to-google-timeline-export.json>")
-        sys.exit(1)
-    run(Path(sys.argv[1]))
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("json_path", type=Path, help="Path to a Google Timeline export JSON file")
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Only import segments starting on/after this date - see module docstring for why this matters",
+    )
+    args = parser.parse_args()
+
+    since_ts = int(datetime.strptime(args.since, "%Y-%m-%d").timestamp()) if args.since else None
+    run(args.json_path, since_ts)
