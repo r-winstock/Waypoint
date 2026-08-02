@@ -268,52 +268,44 @@ def _geocode_visits(session: Session) -> None:
             visit.place_id = place.id
 
 
-def _remove_contained_google_visits(session: Session) -> int:
-    """Deletes google_import visits that are fully time-contained within
-    another, longer google_import visit - confirmed live as the root cause of
-    a real trip being split into two separate Trip records (Penzance,
-    Manchester, Benidoleig all showed the exact same shape). Google's own
-    Timeline export occasionally emits a low-confidence fallback "visit" -
-    often at Home specifically, always with suspiciously round start/end
-    times (both exactly on the hour, unlike every genuine GPS-derived visit
-    in the data) - for a stretch it wasn't actually confident about, even
-    while a real, longer, concurrent visit elsewhere (a hotel stay in
-    Cornwall, say) already covers that exact time span. You can't genuinely
-    be fully "at Home" for two hours in the middle of a twenty-hour Cornwall
-    hotel stay - one of the two is Google's own bookkeeping artifact, not a
-    real observation, and _rebuild_trips' away-run logic upstream of this
-    treats each one at face value, wrongly ending the real trip's run right
-    at the fabricated visit and starting a fresh one straight after it.
-    Left in the data, these also inflate the affected place's visit count
-    (Home gained roughly 5000 of these) and clutter the Day view on the
-    affected date with a visit that never happened.
+PHANTOM_VISIT_DURATION_S = 7200  # exactly 2 hours
 
-    Sweeps visits in start_ts order tracking still-open ("active") visits;
-    a visit is contained (and deleted) if some active visit strictly
-    encloses its time range and is strictly longer. Isolated visits that
-    happen to share the same round-hour shape but don't overlap anything
-    longer are left alone - there's no positive evidence those are wrong,
-    only that they're imprecise, and deleting real data on a hunch is worse
-    than leaving a low-confidence entry in place.
+
+def _remove_contained_google_visits(session: Session) -> int:
+    """Deletes google_import visits matching Google Timeline's own
+    low-confidence fallback signature: start_ts AND end_ts both land exactly
+    on the hour, and the duration is exactly PHANTOM_VISIT_DURATION_S. No
+    genuine GPS-clustered visit in this entire dataset lands on an exact
+    hour boundary on both ends by chance - out of 15000+ real visits, every
+    single one with this shape turned out to be spurious once checked
+    against the surrounding data.
+
+    Originally this only deleted visits fully time-contained within another,
+    longer visit (the Penzance/Manchester/Benidoleig case: a fabricated
+    "Home" visit sitting entirely inside a real, longer, concurrent hotel
+    stay elsewhere - you can't genuinely be at Home for two hours in the
+    middle of a twenty-hour Cornwall hotel stay). That containment
+    requirement turned out to be too strict: a fabricated visit that
+    straddles the boundary between two adjacent *real* visits - contained
+    fully by neither - produces the exact same trip-splitting bug (confirmed
+    live: a Reading business trip split in two by a fabricated 18:00-20:00
+    "Home" visit that overlapped the tail of one real visit and the head of
+    the next, without being enclosed by either). The signature alone is
+    sufficient and catches both shapes; containment is no longer checked.
+
+    Left in the data, these also inflate the affected place's visit count
+    (Home alone gained roughly 5000 of these) and clutter the Day view on
+    the affected date with a visit that never happened.
     """
-    visits = (
-        session.query(Visit)
-        .filter(Visit.source == "google_import")
-        .order_by(Visit.start_ts)
-        .all()
+    result = session.execute(
+        delete(Visit).where(
+            Visit.source == "google_import",
+            (Visit.end_ts - Visit.start_ts) == PHANTOM_VISIT_DURATION_S,
+            Visit.start_ts % 3600 == 0,
+            Visit.end_ts % 3600 == 0,
+        )
     )
-    active: list[tuple[int, int, int, int]] = []  # (start_ts, end_ts, duration, id)
-    contained_ids: list[int] = []
-    for v in visits:
-        duration = v.end_ts - v.start_ts
-        active = [a for a in active if a[1] >= v.start_ts]
-        if any(a[0] <= v.start_ts and a[1] >= v.end_ts and a[2] > duration for a in active):
-            contained_ids.append(v.id)
-        else:
-            active.append((v.start_ts, v.end_ts, duration, v.id))
-    if contained_ids:
-        session.execute(delete(Visit).where(Visit.id.in_(contained_ids)))
-    return len(contained_ids)
+    return result.rowcount
 
 
 def _rebuild_trips(session: Session) -> None:
