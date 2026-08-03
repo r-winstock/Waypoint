@@ -422,18 +422,17 @@ def _rebuild_trips(session: Session) -> None:
         return None
 
     def _is_away(visit: Visit) -> bool:
-        # A regular workplace is never "away", however far it sits from
-        # home - confirmed live this was a real, large problem, not a
-        # cosmetic one: a daily commute to an office 15 miles from home
-        # cleared both the radius and TRIP_MIN_DURATION_S checks below on
-        # nearly every single working day, fabricating 583 separate one-day
-        # "trips" out of nothing but going to work - the majority of every
-        # computed trip in the database. Checked before the home-period
-        # radius test, not instead of it: Work is disqualifying on its own
-        # regardless of distance, since unlike Home there's no reason a
-        # commute would ever sit *inside* a home radius to begin with.
-        if visit.place and visit.place.category == "Work":
-            return False
+        # Work-category visits are never even passed to this function - see
+        # the main loop below, which skips them outright rather than
+        # asking whether they're "away". Kept out of this function
+        # entirely rather than just returning False here, because a visit
+        # right before this one already flushed the run (a plain day
+        # commute) shouldn't fabricate one from Work alone - but a Work
+        # visit sitting *inside* an already-active away-run (visited your
+        # own office while staying overnight on a business trip) shouldn't
+        # end that trip either, and returning False from here would do
+        # exactly that (see _flush_trip_run's own caller for what "not
+        # away" does to a run in progress).
         period = _home_period_for(visit)
         # A visit with no covering period at all (before the earliest known
         # home, or in a gap between two) is treated as "not away" rather
@@ -480,6 +479,22 @@ def _rebuild_trips(session: Session) -> None:
 
     run: list[Visit] = []
     for visit in visits:
+        if visit.place and visit.place.category == "Work":
+            # Neither extends a run nor flushes one already in progress -
+            # confirmed live both failure modes are real. A daily commute
+            # (Home -> Work -> Home) fabricated 583 separate one-day
+            # "trips" out of nothing but going to work when Work counted
+            # as "away" in its own right; a Work visit sitting inside an
+            # already-active away-run (visited your own office while
+            # staying overnight on a genuine business trip) wrongly ended
+            # that trip when Work instead counted as an explicit "not
+            # away" break. Simply skipping it avoids both: a run that's
+            # empty stays empty (no trip fabricated from Work alone,
+            # matching the Home-Work-Home case), and a run already in
+            # progress carries on exactly as it was (the trip continues
+            # straight through the office visit, matching the business-
+            # trip case).
+            continue
         if not _is_away(visit):
             _flush_trip_run(session, run, corrections)
             run = []
