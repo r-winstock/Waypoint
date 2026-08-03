@@ -32,6 +32,14 @@ function formatTime(ts) {
   return new Date(ts * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
+// Full date+time for a raw unix timestamp - the Diagnostics tab's own
+// need (exact moment a point/log entry landed), distinct from every other
+// formatter here which only ever needs a bare time or a "3 days ago" style
+// relative label.
+function formatTimestamp(ts) {
+  return new Date(ts * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 // A plain "20:28 – 13:14" reads as same-day even when the end time is
 // actually the next calendar day (or later) - confirmed live this was
 // genuinely confusing (a Home visit still open at view time, an overnight
@@ -187,10 +195,47 @@ function waypoint() {
     openPhotoViewer(photo) { this.photoViewer = { open: true, photo }; },
     closePhotoViewer() { this.photoViewer.open = false; },
 
+    // ─── Diagnostics ───
+    // Built directly out of a real incident: a silent server-side ingest
+    // failure went unnoticed for ~12 hours overnight, only found the next
+    // morning by manually comparing timestamps over SSH. This page exists
+    // so "is tracking actually working right now" is a glance, not an SSH
+    // session.
+    diagnostics: null,
+    async loadDiagnostics() {
+      try {
+        const res = await fetch('/api/diagnostics');
+        this.diagnostics = await res.json();
+      } catch (e) { console.error('Failed to load diagnostics', e); }
+    },
+    // Thresholds matched to the actual failure mode this page was built
+    // for: Significant-Changes mode's own ~15min fix interval (see the
+    // OwnTracks monitoring-mode discussion) means an hour of silence is
+    // already unusual, not just "between pings". A failed/never-run
+    // scheduler is its own distinct error state regardless of point
+    // freshness - a data-arriving-but-never-processed gap is exactly as
+    // real a problem as no data arriving at all.
+    diagnosticsStatus() {
+      const d = this.diagnostics;
+      if (!d) return { level: 'ok', message: 'Loading…' };
+      if (!d.last_point) return { level: 'error', message: 'No location data has ever been received.' };
+      if (d.scheduler.last_ok === false) {
+        return { level: 'error', message: `Background processing is failing: ${d.scheduler.last_error || 'unknown error'}` };
+      }
+      if (d.last_point.age_s > 4 * 3600) {
+        return { level: 'error', message: `No location data for ${formatDuration(d.last_point.age_s)} - tracking may be stalled.` };
+      }
+      if (d.last_point.age_s > 3600) {
+        return { level: 'warn', message: `No location data for ${formatDuration(d.last_point.age_s)} - worth keeping an eye on.` };
+      }
+      return { level: 'ok', message: 'Tracking is up to date.' };
+    },
+
     // ─── formatters exposed to templates ───
     formatMiles,
     formatDuration,
     formatTime,
+    formatTimestamp,
     formatTimeRange,
     formatDateRange,
     formatRelative,
@@ -357,6 +402,10 @@ function waypoint() {
       if (tab === 'places' && !this.places.data) this.loadPlaces();
       if (tab === 'cities' && !this.cities.data) this.loadCities();
       if (tab === 'world' && !this.world.data) this.loadWorld();
+      // Always refetch (not just "if not loaded") - staleness is exactly
+      // what this page exists to surface, so it should never show a stale
+      // snapshot from an earlier tab visit.
+      if (tab === 'diagnostics') this.loadDiagnostics();
 
       this.$nextTick(() => {
         if (tab === 'day' && this.day.map) this.day.map.invalidateSize();

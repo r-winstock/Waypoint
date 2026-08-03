@@ -87,6 +87,7 @@
           <button class="nav-tab" :class="tab==='places' && 'active'" @click="switchTab('places')"><i data-lucide="map-pin" class="w-4 h-4"></i> Places</button>
           <button class="nav-tab" :class="tab==='cities' && 'active'" @click="switchTab('cities')"><i data-lucide="building-2" class="w-4 h-4"></i> Cities</button>
           <button class="nav-tab" :class="tab==='world' && 'active'" @click="switchTab('world')"><i data-lucide="globe" class="w-4 h-4"></i> World</button>
+          <button class="nav-tab" :class="tab==='diagnostics' && 'active'" @click="switchTab('diagnostics')"><i data-lucide="activity" class="w-4 h-4"></i> Diagnostics</button>
         </nav>
       </div>
 
@@ -1540,6 +1541,106 @@
             </template>
           </div>
         </div>
+      </template>
+    </div>
+
+    <!-- ═══════════ DIAGNOSTICS ═══════════ -->
+    <div x-show="tab==='diagnostics'">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-base font-semibold">Diagnostics</h2>
+        <button class="btn-icon" @click="loadDiagnostics()" title="Refresh"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+      </div>
+
+      <template x-if="diagnostics">
+        <div>
+          <!-- Overall status banner - the single "is everything OK" answer,
+               built directly out of a real incident (a silent server-side
+               ingest failure that went unnoticed for ~12 hours overnight,
+               only found by manually comparing timestamps the next
+               morning) this page exists specifically to catch sooner. -->
+          <div class="diag-status-banner" :class="'diag-status-' + diagnosticsStatus().level">
+            <span class="diag-status-dot"></span>
+            <span x-text="diagnosticsStatus().message"></span>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3 mt-3">
+            <div class="stat-tile">
+              <div class="label">Last location received</div>
+              <template x-if="diagnostics.last_point">
+                <div>
+                  <div class="value" style="font-size: 20px" x-text="formatDuration(diagnostics.last_point.age_s) + ' ago'"></div>
+                  <div class="detail" x-text="formatTimestamp(diagnostics.last_point.tst) + ' · ' + diagnostics.last_point.lat.toFixed(5) + ', ' + diagnostics.last_point.lon.toFixed(5)"></div>
+                  <div class="detail" x-text="'accuracy ' + (diagnostics.last_point.acc ?? '?') + 'm · battery ' + (diagnostics.last_point.batt ?? '?') + '% · source ' + diagnostics.last_point.source"></div>
+                </div>
+              </template>
+              <template x-if="!diagnostics.last_point">
+                <div class="value" style="font-size: 20px">No data ever received</div>
+              </template>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Background processing (scheduler)</div>
+              <template x-if="diagnostics.scheduler.last_run_ts">
+                <div>
+                  <div class="value" style="font-size: 20px" x-text="formatDuration(diagnostics.scheduler.last_run_age_s) + ' ago'"></div>
+                  <div class="detail" x-text="diagnostics.scheduler.last_ok ? 'last run OK' : ('last run FAILED: ' + diagnostics.scheduler.last_error)"></div>
+                </div>
+              </template>
+              <template x-if="!diagnostics.scheduler.last_run_ts">
+                <div class="value" style="font-size: 20px">Never run</div>
+              </template>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <div class="stat-tile">
+              <div class="label">Points, last hour</div>
+              <div class="value tabular" x-text="diagnostics.points_last_hour"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Points, last 24h</div>
+              <div class="value tabular" x-text="diagnostics.points_last_day"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">App uptime</div>
+              <div class="value tabular" x-text="formatDuration(diagnostics.uptime_s)"></div>
+            </div>
+            <div class="stat-tile">
+              <div class="label">Database size</div>
+              <div class="value tabular" x-text="diagnostics.db_size_bytes ? (diagnostics.db_size_bytes / 1048576).toFixed(1) + ' MB' : '—'"></div>
+            </div>
+          </div>
+
+          <h2 class="text-base font-semibold mb-2">Row counts</h2>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div class="stat-tile"><div class="label">Location points</div><div class="value tabular" x-text="diagnostics.counts.location_points.toLocaleString()"></div></div>
+            <div class="stat-tile"><div class="label">Visits</div><div class="value tabular" x-text="diagnostics.counts.visits.toLocaleString()"></div></div>
+            <div class="stat-tile"><div class="label">Segments</div><div class="value tabular" x-text="diagnostics.counts.trip_segments.toLocaleString()"></div></div>
+            <div class="stat-tile"><div class="label">Trips</div><div class="value tabular" x-text="diagnostics.counts.trips.toLocaleString()"></div></div>
+            <div class="stat-tile"><div class="label">Places</div><div class="value tabular" x-text="diagnostics.counts.places.toLocaleString()"></div></div>
+          </div>
+
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-base font-semibold">Recent warnings/errors</h2>
+            <div class="text-xs" style="color: var(--wp-fg-dim)">since app start · resets on restart</div>
+          </div>
+          <div class="diag-log-list mb-6">
+            <template x-for="(entry, i) in diagnostics.recent_logs" :key="i">
+              <div class="diag-log-row" :class="'diag-log-' + entry.level.toLowerCase()">
+                <span class="diag-log-time tabular" x-text="formatTimestamp(entry.ts)"></span>
+                <span class="diag-log-level" x-text="entry.level"></span>
+                <span class="diag-log-message" x-text="entry.message"></span>
+              </div>
+            </template>
+            <template x-if="!diagnostics.recent_logs.length">
+              <div class="empty-state">No warnings or errors since the app last started - good sign.</div>
+            </template>
+          </div>
+
+          <div class="text-xs text-center" style="color: var(--wp-fg-faint)" x-text="'Waypoint ' + diagnostics.version"></div>
+        </div>
+      </template>
+      <template x-if="!diagnostics">
+        <div class="empty-state">Loading…</div>
       </template>
     </div>
 

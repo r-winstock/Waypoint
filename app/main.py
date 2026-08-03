@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import cities, day, events, images, insights, places, routing, settings, trips, world
+from app.api import cities, day, diagnostics, events, images, insights, places, routing, settings, trips, world
+from app.api.diagnostics import install_log_buffer
 from app.db import get_session, init_db
 from app.ingest import router as ingest_router
 from app.processing import process_all
@@ -27,6 +28,7 @@ _CACHE_BUST = str(int(time.time()))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    install_log_buffer()
     start_scheduler()
     yield
     stop_scheduler()
@@ -62,6 +64,7 @@ app.include_router(places.router)
 app.include_router(cities.router)
 app.include_router(world.router)
 app.include_router(settings.router)
+app.include_router(diagnostics.router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

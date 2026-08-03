@@ -727,3 +727,28 @@ h1, h2, h3, .display {
 .weekday-pattern-bar { width: 40%; border-radius: 2px 2px 0 0; }
 .weekday-pattern-bar-departures { background: var(--wp-accent); }
 .weekday-pattern-bar-returns { background: var(--wp-fg-faint); }
+
+/* ─── Diagnostics tab ─── */
+.diag-status-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-radius: var(--wp-radius-card);
+  font-size: 14px; font-weight: 600;
+}
+.diag-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.diag-status-ok { background: var(--wp-accent-bg); border: 1px solid var(--wp-accent-border); color: var(--wp-fg-primary); }
+.diag-status-ok .diag-status-dot { background: var(--wp-accent); }
+.diag-status-warn { background: rgba(245, 158, 11, 0.15); border: 1px solid var(--wp-warn); color: var(--wp-fg-primary); }
+.diag-status-warn .diag-status-dot { background: var(--wp-warn); }
+.diag-status-error { background: rgba(239, 68, 68, 0.15); border: 1px solid var(--wp-danger); color: var(--wp-fg-primary); }
+.diag-status-error .diag-status-dot { background: var(--wp-danger); }
+
+.diag-log-list { display: flex; flex-direction: column; gap: 1px; border-radius: var(--wp-radius-card); overflow: hidden; }
+.diag-log-row {
+  display: grid; grid-template-columns: 110px 70px 1fr; gap: 10px; align-items: baseline;
+  padding: 6px 10px; font-size: 12px; background: var(--wp-surface-2);
+}
+.diag-log-time { color: var(--wp-fg-dim); white-space: nowrap; }
+.diag-log-level { font-weight: 700; text-transform: uppercase; font-size: 10px; }
+.diag-log-warning .diag-log-level { color: var(--wp-warn); }
+.diag-log-error .diag-log-level, .diag-log-critical .diag-log-level { color: var(--wp-danger); }
+.diag-log-message { color: var(--wp-fg-secondary); word-break: break-word; font-family: var(--wp-font-mono); font-size: 11px; }
