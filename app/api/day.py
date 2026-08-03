@@ -172,6 +172,51 @@ def get_day(day_str: str, session: Session = Depends(db_dependency)):
         )
     timeline.sort(key=lambda e: e["start_ts"])
 
+    # A visit that started before this day - an ongoing multi-day stay that
+    # never technically broke (confirmed live: OwnTracks' own resolution
+    # missed a same-day round trip that only Google's richer imported data
+    # caught, so the underlying Home visit never registered a real
+    # departure) - already appears once above, sorted by its own earlier
+    # start_ts. That puts it at the very *top* of today's timeline, not the
+    # bottom, even though it's the same stay that covers "arrived back
+    # home" after today's last segment too. Every day that visibly "ends
+    # with a visit" only does so because that day's own return created a
+    # genuinely new Visit row with a start_ts falling inside that specific
+    # day; when the stay never broke at all, there's no second row to show
+    # at the end. Appends a clipped, second appearance of that same
+    # ongoing visit - starting right where the day's last segment ends -
+    # whenever today's timeline would otherwise trail off on a segment
+    # with nothing after it.
+    if timeline and timeline[-1]["type"] == "segment":
+        last_end = timeline[-1]["end_ts"]
+        closing_visit = next(
+            (v for v in visits if v.place_id is not None and v.start_ts <= last_end <= v.end_ts),
+            None,
+        )
+        if closing_visit is not None:
+            timeline.append(
+                {
+                    "type": "visit",
+                    # Distinct from the id its own earlier appearance in this
+                    # same timeline already used (see the comment above) -
+                    # the frontend's :key is "type-id", and two entries with
+                    # the same type+id would collide there even though this
+                    # one is deliberately a second, clipped appearance of the
+                    # same underlying visit, not a duplicate to be merged.
+                    "id": f"{closing_visit.id}-return",
+                    "visit_ids": [closing_visit.id],
+                    "start_ts": last_end,
+                    "end_ts": max(closing_visit.end_ts, last_end),
+                    "lat": closing_visit.lat,
+                    "lon": closing_visit.lon,
+                    "place_id": closing_visit.place_id,
+                    "place_name": closing_visit.place.name if closing_visit.place else None,
+                    "place_name_local": closing_visit.place.name_local if closing_visit.place else None,
+                    "category": closing_visit.place.category if closing_visit.place else None,
+                    "city": closing_visit.place.city if closing_visit.place else None,
+                }
+            )
+
     # Dynamic by whatever modes actually occur today - was hardcoded to just
     # driving/flying/walking, which silently dropped cycling/taxi/bus/train/
     # subway/tram/ferry distance from the stat tiles once those modes existed.
