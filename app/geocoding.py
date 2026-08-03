@@ -351,10 +351,11 @@ def _tag_home(session: Session, place: Place, lat: float, lon: float) -> None:
     however many visits it's ever had, potentially spanning several home
     eras, so "was this ever a home address" is the right question here,
     not "was it home at any one particular moment". Only overrides the
-    generic "Other places" fallback, and never a place the user has
-    corrected themselves or that OSM tags already gave a more specific
-    category."""
-    if place.manually_corrected or place.category != "Other places":
+    generic "Other places"/"Streets and roads" fallbacks (the latter is
+    itself just a bare road/address match, not a meaningful category - see
+    CATEGORY_RULES), and never a place the user has corrected themselves or
+    that OSM tags already gave a genuinely more specific category."""
+    if place.manually_corrected or place.category not in ("Other places", "Streets and roads"):
         return
     for period in session.query(HomePeriod).all():
         if _haversine_m(lat, lon, period.lat, period.lon) <= period.radius_m:
