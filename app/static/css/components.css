@@ -599,6 +599,13 @@ h1, h2, h3, .display {
 .leaflet-popup-content b { font-family: var(--wp-font-display); font-weight: 400; color: var(--wp-map-popup-accent); }
 .leaflet-popup-tip { background: var(--wp-map-popup-bg); }
 
+.wp-fullscreen-control a { font-size: 16px; line-height: 26px; }
+/* The Fullscreen API renders the target in the browser's top layer at full
+   viewport size regardless of its normal in-card height - this just makes
+   sure nothing else on the page (in-card padding, the card's own max-height)
+   leaks through while it's up there. */
+.leaflet-container:fullscreen { width: 100vw; height: 100vh; }
+
 /* Category-icon map markers, replacing plain coloured dots - visually
    consistent with the Day timeline's own category badges. */
 .wp-map-marker { background: none; border: none; }

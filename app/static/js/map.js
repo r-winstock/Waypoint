@@ -142,7 +142,45 @@ function wpInitMap(containerId, opts = {}) {
   const layers = Object.fromEntries(Object.entries(WP_BASE_LAYERS).map(([name, make]) => [name, make()]));
   layers.Streets.addTo(map);
   L.control.layers(layers).addTo(map);
+  wpAddFullscreenControl(map, containerId);
   return map;
+}
+
+// A single shared control so every map view (Day/Trip/City/Country/Place/
+// World) gets "view larger map" for free, rather than each view wiring its
+// own button - the container element itself is what goes fullscreen (the
+// Fullscreen API renders it in the browser's top layer at full viewport
+// size regardless of its normal in-card height), so no separate overlay/
+// modal markup is needed.
+function wpAddFullscreenControl(map, containerId) {
+  const control = L.control({ position: 'topright' });
+  control.onAdd = function () {
+    const el = L.DomUtil.create('div', 'leaflet-bar wp-fullscreen-control');
+    const link = L.DomUtil.create('a', '', el);
+    link.href = '#';
+    link.title = 'View larger map';
+    link.innerHTML = '⛶';
+    L.DomEvent.disableClickPropagation(el);
+    L.DomEvent.on(link, 'click', L.DomEvent.stop).on(link, 'click', () => {
+      const target = document.getElementById(containerId);
+      if (!target) return;
+      if (document.fullscreenElement === target) {
+        document.exitFullscreen?.();
+      } else {
+        target.requestFullscreen?.();
+      }
+    });
+    return el;
+  };
+  control.addTo(map);
+
+  const containerEl = document.getElementById(containerId);
+  containerEl?.addEventListener('fullscreenchange', () => {
+    // The map div's on-screen size just changed (card-sized <-> viewport-
+    // sized); Leaflet caches tile positions against the size it last knew
+    // about, so without this it renders grey/blank past the old bounds.
+    setTimeout(() => map.invalidateSize(), 50);
+  });
 }
 
 async function wpFetchRoute(mode, fromLat, fromLon, toLat, toLon) {

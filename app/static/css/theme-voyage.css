@@ -123,37 +123,6 @@
 
 :root[data-theme="voyage"] .voyage-flourish { display: block; }
 
-/* Photo-corner mounts, evoking a print tucked into a travel journal rather
-   than a plain rectangle. Two opposing corners, not all four - ::before/
-   ::after are the only two pseudo-element slots one real element offers,
-   and a diagonal pair already reads as intentional album-page styling
-   without needing four separate image assets or extra DOM nodes. */
-:root[data-theme="voyage"] .trip-card .banner::before,
-:root[data-theme="voyage"] .grid-card--photo::before,
-:root[data-theme="voyage"] .story-card::before,
-:root[data-theme="voyage"] .trip-card .banner::after,
-:root[data-theme="voyage"] .grid-card--photo::after,
-:root[data-theme="voyage"] .story-card::after {
-  content: '';
-  position: absolute;
-  width: 44px; height: 41px;
-  background: url('/static/images/photo-corner.png') no-repeat;
-  background-size: contain;
-  z-index: 3;
-  pointer-events: none;
-}
-:root[data-theme="voyage"] .trip-card .banner::before,
-:root[data-theme="voyage"] .grid-card--photo::before,
-:root[data-theme="voyage"] .story-card::before {
-  top: 0; left: 0;
-}
-:root[data-theme="voyage"] .trip-card .banner::after,
-:root[data-theme="voyage"] .grid-card--photo::after,
-:root[data-theme="voyage"] .story-card::after {
-  bottom: 0; right: 0;
-  transform: rotate(180deg);
-}
-
 /* Map marker badge - a softened asymmetric corner rather than a perfect
    circle, evoking a hand-stamped travel pin. Deliberately NOT a full
    teardrop: these markers' iconSize/iconAnchor are set once in JS (see
