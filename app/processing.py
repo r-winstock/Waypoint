@@ -439,11 +439,21 @@ def _rebuild_trips(session: Session) -> None:
             gap_s = visit.start_ts - run[-1].end_ts
             # See MAX_AWAY_GAP_S: a long quiet stretch with no visit at all
             # is ambiguous on its own (asleep at home with nothing logged,
-            # or asleep at a hotel three hundred miles away) - only treat it
-            # as an implicit return home when both the visit before and the
-            # visit after the gap are still close to home, since a genuine
-            # away destination never is.
-            if gap_s > MAX_AWAY_GAP_S and _near_home(run[-1]) and _near_home(visit):
+            # or asleep at a hotel three hundred miles away). Originally
+            # required *both* the visit before and the visit after the gap
+            # to be near home before treating it as an implicit return - but
+            # confirmed live that's too strict: a mundane local errand (an
+            # ALDI run in Bedford) sitting right next to a genuine multi-day
+            # trip (a Cotswold hotel stay, a flight out of Stansted) merged
+            # the two together into one fabricated 22-day "trip", because
+            # the *other* side of each gap was always genuinely remote by
+            # definition - a real trip's own departure/return is exactly the
+            # case where only one side of the gap is ever near home. Either
+            # side being near home is enough: if you were home-ish right
+            # before or right after a long gap, you almost certainly went
+            # properly home in between, regardless of how far the trip on
+            # the other side of that gap actually reaches.
+            if gap_s > MAX_AWAY_GAP_S and (_near_home(run[-1]) or _near_home(visit)):
                 _flush_trip_run(session, run, corrections)
                 run = []
         run.append(visit)
