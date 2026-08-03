@@ -68,6 +68,27 @@ MAX_AWAY_GAP_S = 8 * 3600
 # "at home" from "anywhere else at all", not to define the whole local area.
 HOME_LOCALITY_RADIUS_M = 15_000.0
 
+# A gap this long with *zero* recorded activity at all - no visit, no
+# TripSegment, nothing - is treated as a likely return home even when
+# neither side of the gap is itself near home. Confirmed live: a Cotswold
+# hotel stay and a separate flight to Italy got fused into one fabricated
+# 22-day "trip", because the gap between them (a genuine ~46.5h silence)
+# sits between two segments that are themselves nowhere near home (a
+# Cotswold hotel, Stansted Airport) - the HOME_LOCALITY_RADIUS_M rule above
+# never triggers there, since it needs at least one *endpoint* near home,
+# and a real trip's own quiet middle usually isn't. But a driving segment
+# ending right at the start of that gap (140km, a plausible drive home from
+# the Cotswolds) and another starting right at its end (89km, a plausible
+# drive from home to Stansted) show the person was moving right up to both
+# edges of an otherwise completely blank stretch - strong circumstantial
+# evidence they went home in between, even with no Visit proving it.
+# Deliberately much longer than MAX_AWAY_GAP_S (that rule already covers
+# the near-home case with a lower bar) - a full day-plus of total silence
+# is rare enough within a genuine single trip that treating it as a
+# probable break is the safer default, matching the same "no insight beats
+# a wrong-looking one" reasoning used throughout this module.
+TOTAL_BLANK_GAP_S = 24 * 3600
+
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     r = 6_371_000.0
@@ -429,6 +450,34 @@ def _rebuild_trips(session: Session) -> None:
         period = _home_period_for(visit)
         return period is not None and haversine_m(visit.lat, visit.lon, period.lat, period.lon) <= HOME_LOCALITY_RADIUS_M
 
+    # See TOTAL_BLANK_GAP_S for why this exists. Loaded once here rather
+    # than queried per-gap (thousands of visits would mean thousands of
+    # repeated queries otherwise) - only ever scanned when a gap has
+    # already cleared the (rare) 24h threshold below, so an O(segments)
+    # scan per qualifying gap is cheap in aggregate even without an index.
+    segment_rows = session.query(TripSegment.start_ts, TripSegment.end_ts).all()
+
+    def _gap_max_blank_s(gap_start: int, gap_end: int) -> int:
+        # The largest contiguous stretch of [gap_start, gap_end) not
+        # covered by any segment - deliberately not just "is any segment
+        # anywhere in the gap": a real segment can legitimately touch one
+        # or both *edges* of an otherwise-blank gap (a drive away from home
+        # right before it starts, a drive to the airport right before it
+        # ends) without that meaning the long blank stretch in the *middle*
+        # was actually covered by anything.
+        overlapping = sorted(
+            (s for s in segment_rows if s.start_ts < gap_end and s.end_ts > gap_start),
+            key=lambda s: s.start_ts,
+        )
+        cursor = gap_start
+        max_blank = 0
+        for s in overlapping:
+            seg_start = max(s.start_ts, gap_start)
+            if seg_start > cursor:
+                max_blank = max(max_blank, seg_start - cursor)
+            cursor = max(cursor, min(s.end_ts, gap_end))
+        return max(max_blank, gap_end - cursor)
+
     run: list[Visit] = []
     for visit in visits:
         if not _is_away(visit):
@@ -453,7 +502,15 @@ def _rebuild_trips(session: Session) -> None:
             # before or right after a long gap, you almost certainly went
             # properly home in between, regardless of how far the trip on
             # the other side of that gap actually reaches.
-            if gap_s > MAX_AWAY_GAP_S and (_near_home(run[-1]) or _near_home(visit)):
+            near_home_break = gap_s > MAX_AWAY_GAP_S and (_near_home(run[-1]) or _near_home(visit))
+            # See TOTAL_BLANK_GAP_S: covers the case above's own blind spot -
+            # neither side near home at all (a Cotswold hotel, an airport),
+            # but a genuinely long stretch with *no* activity of any kind
+            # bridging them.
+            total_blank_break = (
+                gap_s > TOTAL_BLANK_GAP_S and _gap_max_blank_s(run[-1].end_ts, visit.start_ts) > TOTAL_BLANK_GAP_S
+            )
+            if near_home_break or total_blank_break:
                 _flush_trip_run(session, run, corrections)
                 run = []
         run.append(visit)
