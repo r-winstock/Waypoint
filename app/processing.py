@@ -42,6 +42,19 @@ MAX_TRUSTED_ACCURACY_M = 100.0
 # effectively the same spot) and are dropped rather than recorded.
 MIN_SEGMENT_DISTANCE_M = 20.0
 
+# A tracking dropout inside a leg (phone killed in the background, then
+# resumed - a confirmed recurring issue, see the Diagnostics tab) otherwise
+# gets silently blended into the leg's average speed: the whole elapsed time
+# from before the dropout to after it is divided into the crow-flies
+# distance, which is small enough relative to the huge duration that a
+# genuine ~1h drive spanning a ~9h blackout classifies as several hours of
+# "walking" at ~1 km/h - confirmed live, 5 August 2026. Any points-to-points
+# gap this long inside a leg splits it into separate sub-legs instead, each
+# classified on its own; the blank stretch between them is left unrepresented
+# rather than bridged, same as everywhere else "no data" already means "no
+# segment" rather than a fabricated one.
+MAX_INTRA_LEG_GAP_S = 30 * 60
+
 # A stretch away from home shorter than this doesn't count as a "trip" - see
 # _flush_trip_run for why (routine errands outside the home radius otherwise
 # flood the Trips view).
@@ -261,24 +274,44 @@ def _rebuild_trip_segments(session: Session, points: list[RawPoint]) -> None:
         if len(leg) < 2:
             continue
 
-        distance_m, duration_s = distance_and_duration(leg)
-        if distance_m < MIN_SEGMENT_DISTANCE_M or duration_s <= 0:
-            continue
+        sub_legs = _split_leg_on_gaps(leg)
+        for i, sub_leg in enumerate(sub_legs):
+            if len(sub_leg) < 2:
+                continue
 
-        avg_kmh = (distance_m / 1000.0) / (duration_s / 3600.0)
-        mode = classify_mode_by_speed(avg_kmh)
+            distance_m, duration_s = distance_and_duration(sub_leg)
+            if distance_m < MIN_SEGMENT_DISTANCE_M or duration_s <= 0:
+                continue
 
-        session.add(
-            TripSegment(
-                start_ts=leg[0].tst,
-                end_ts=leg[-1].tst,
-                mode=mode,
-                distance_m=distance_m,
-                duration_s=duration_s,
-                start_visit_id=prev.id,
-                end_visit_id=nxt.id,
+            avg_kmh = (distance_m / 1000.0) / (duration_s / 3600.0)
+            mode = classify_mode_by_speed(avg_kmh)
+
+            # A gap-split sub-leg in the middle isn't actually adjacent to
+            # either real visit any more - only the first/last sub-leg still
+            # is, so those FKs stay null for the others (already handled as
+            # routinely-null elsewhere, see app/api/routing.py).
+            session.add(
+                TripSegment(
+                    start_ts=sub_leg[0].tst,
+                    end_ts=sub_leg[-1].tst,
+                    mode=mode,
+                    distance_m=distance_m,
+                    duration_s=duration_s,
+                    start_visit_id=prev.id if i == 0 else None,
+                    end_visit_id=nxt.id if i == len(sub_legs) - 1 else None,
+                )
             )
-        )
+
+
+def _split_leg_on_gaps(leg: list[RawPoint]) -> list[list[RawPoint]]:
+    """Breaks a leg into contiguous sub-legs wherever consecutive points are
+    more than MAX_INTRA_LEG_GAP_S apart - see that constant's own comment."""
+    sub_legs: list[list[RawPoint]] = [[leg[0]]]
+    for point in leg[1:]:
+        if point.tst - sub_legs[-1][-1].tst > MAX_INTRA_LEG_GAP_S:
+            sub_legs.append([])
+        sub_legs[-1].append(point)
+    return sub_legs
 
 
 def _bisect_left(a: list[int], x: int) -> int:
