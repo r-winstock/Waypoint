@@ -178,7 +178,7 @@ def process_all(session: Session) -> None:
 
     _rebuild_visits(session, points)
     session.flush()
-    _rebuild_trip_segments(session, points)
+    _rebuild_trip_segments(session)
     _geocode_visits(session)
     _rebuild_trips(session)
     session.commit()
@@ -251,14 +251,40 @@ def _rebuild_visits(session: Session, points: list[RawPoint]) -> None:
         session.add(Visit(start_ts=v.start_ts, end_ts=v.end_ts, lat=v.lat, lon=v.lon, point_count=v.point_count))
 
 
-def _rebuild_trip_segments(session: Session, points: list[RawPoint]) -> None:
+def _rebuild_trip_segments(session: Session) -> None:
     # Same source-scoping as _rebuild_visits - never touches imported segments.
     session.execute(delete(TripSegment).where(TripSegment.source == "owntracks"))
 
-    # Only pairs OwnTracks-derived visits - imported visits already have their
-    # own Google-classified segments and don't need raw-point legs synthesised
-    # between them (there are none: location_points only holds live pings).
-    visits = session.query(Visit).filter(Visit.source == "owntracks").order_by(Visit.start_ts).all()
+    # Loads its own points rather than taking them as a parameter - lets a
+    # manual-visit insert (see app/api/events.py) call this standalone to
+    # re-derive the segments either side of the new visit, without having to
+    # duplicate process_all's own point-loading query.
+    points = [
+        RawPoint(p.lat, p.lon, p.tst)
+        for p in session.query(LocationPoint)
+        .filter(
+            LocationPoint.source == "owntracks",
+            (LocationPoint.acc.is_(None)) | (LocationPoint.acc <= MAX_TRUSTED_ACCURACY_M),
+        )
+        .order_by(LocationPoint.tst)
+        .all()
+    ]
+    if not points:
+        return
+
+    # Pairs OwnTracks-derived visits AND manually-inserted ones (source=
+    # "manual" - see app/api/events.py's create_visit) - a manual visit is a
+    # real boundary the raw GPS legs need to be re-split around exactly like
+    # any other stay, it just didn't come from the automatic clustering pass.
+    # Imported visits are excluded: they already have their own Google-
+    # classified segments and there are no raw points to build legs from
+    # between them anyway (location_points only ever holds live pings).
+    visits = (
+        session.query(Visit)
+        .filter(Visit.source.in_(("owntracks", "manual")))
+        .order_by(Visit.start_ts)
+        .all()
+    )
     if len(visits) < 2:
         return
 

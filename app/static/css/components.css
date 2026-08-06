@@ -586,6 +586,10 @@ h1, h2, h3, .display {
    deliberately overrides the shared 320px rule above for this one map only. */
 #map-container.day-map { height: min(65vh, 640px); }
 
+/* Add-visit placing mode - the whole map becomes the "pick a spot" target,
+   so a crosshair reads better here than the usual grab/pointer cursor. */
+#map-container.day-map-placing .leaflet-container { cursor: crosshair; }
+
 /* Day view: map (taller, left) + stat tiles/timeline (scrollable, right) -
    collapses to a single stacked column on narrow screens where side-by-side
    would leave either pane too cramped to use. */

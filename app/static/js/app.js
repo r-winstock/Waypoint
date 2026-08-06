@@ -185,6 +185,19 @@ function waypoint() {
       searchQuery: '', searchResults: [], searching: false, saving: false,
     },
 
+    // A visit tracking missed entirely (dead battery, phone left at home) -
+    // distinct from segmentConvert (which corrects a mis-classified segment
+    // that DOES already exist): this fills a genuine gap, so it starts from
+    // a map click rather than an existing timeline entry. `placing` is true
+    // between clicking "Add visit" and clicking the map; the modal only
+    // opens once a location's been picked.
+    addVisit: {
+      placing: false, open: false, lat: null, lon: null,
+      startLocal: '', endLocal: '',
+      name: '', category: 'Other places', city: '', country: '', countryCode: '',
+      searchQuery: '', searchResults: [], searching: false, saving: false,
+    },
+
     tripEdit: {
       open: false, tripId: null, name: '', primaryCity: '', primaryCountry: '', primaryCountryCode: '',
       biasLat: null, biasLon: null,
@@ -583,7 +596,13 @@ function waypoint() {
       this.loadDay();
     },
     renderDayMap() {
-      if (!this.day.map) this.day.map = wpInitMap('map-container');
+      if (!this.day.map) {
+        this.day.map = wpInitMap('map-container');
+        // Wired once against the map instance itself (not per-render) -
+        // handleDayMapClick no-ops unless addVisit.placing is true, so this
+        // never interferes with ordinary panning/marker clicks.
+        this.day.map.on('click', (e) => this.handleDayMapClick(e));
+      }
       wpRenderDayMap(this.day.map, this.day.data.points, this.day.data.timeline, this.day.data.context_visits, this.allTimelinePhotos(this.day.data), (photo) => this.openPhotoViewer(photo));
     },
     // `data.photos` is only the leftover photos that didn't match any
@@ -2096,6 +2115,95 @@ function waypoint() {
         await this.loadDay();
       } catch (e) { console.error('Failed to convert segment', e); }
       finally { this.segmentConvert.saving = false; }
+    },
+
+    // ─── Manual visit insertion (fills a genuine tracking gap) ───
+    startAddVisit() {
+      this.addVisit.placing = true;
+    },
+    cancelAddVisitPlacing() {
+      this.addVisit.placing = false;
+    },
+    // Fired by the Leaflet click handler wired up once in renderDayMap -
+    // only acts while `placing` is true, so ordinary map interaction
+    // (panning, clicking a marker) elsewhere in the app is untouched.
+    handleDayMapClick(e) {
+      if (!this.addVisit.placing) return;
+      this.addVisit.placing = false;
+      this.addVisit.open = true;
+      this.addVisit.lat = e.latlng.lat;
+      this.addVisit.lon = e.latlng.lng;
+      // Defaults to a plausible daytime window on the day currently being
+      // viewed - just a starting point, both fields are freely editable
+      // before saving.
+      this.addVisit.startLocal = `${this.day.date}T09:00`;
+      this.addVisit.endLocal = `${this.day.date}T17:00`;
+      this.addVisit.name = '';
+      this.addVisit.category = 'Other places';
+      this.addVisit.city = '';
+      this.addVisit.country = '';
+      this.addVisit.countryCode = '';
+      this.addVisit.searchQuery = '';
+      this.addVisit.searchResults = [];
+    },
+    closeAddVisit() {
+      this.addVisit.open = false;
+    },
+    async searchAddVisitPlaces() {
+      if (!this.addVisit.searchQuery.trim()) return;
+      this.addVisit.searching = true;
+      try {
+        const params = new URLSearchParams({ q: this.addVisit.searchQuery, lat: this.addVisit.lat, lon: this.addVisit.lon });
+        const res = await fetch(`/api/places/search?${params}`);
+        const data = await res.json();
+        this.addVisit.searchResults = data.results || [];
+      } catch (e) { console.error('Failed to search places', e); }
+      finally { this.addVisit.searching = false; }
+    },
+    selectAddVisitResult(result) {
+      this.addVisit.name = result.name;
+      this.addVisit.category = result.category;
+      this.addVisit.city = result.city || '';
+      this.addVisit.country = result.country || '';
+      this.addVisit.countryCode = result.country_code || '';
+      this.addVisit.lat = result.lat;
+      this.addVisit.lon = result.lon;
+      this.addVisit.searchResults = [];
+      this.addVisit.searchQuery = '';
+    },
+    async saveAddVisit() {
+      const startTs = Math.floor(new Date(this.addVisit.startLocal).getTime() / 1000);
+      const endTs = Math.floor(new Date(this.addVisit.endLocal).getTime() / 1000);
+      if (!this.addVisit.startLocal || !this.addVisit.endLocal || Number.isNaN(startTs) || Number.isNaN(endTs)) {
+        alert('Set a start and end time first.'); return;
+      }
+      if (endTs <= startTs) { alert('End time must be after the start time.'); return; }
+      this.addVisit.saving = true;
+      try {
+        const res = await fetch('/api/events/visits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: this.addVisit.lat, lon: this.addVisit.lon,
+            start_ts: startTs, end_ts: endTs,
+            // A blank name leaves place resolution to the same reverse-geocode
+            // every other visit gets - "optionally choose a location" per
+            // Richard's own framing, not a required field.
+            name: this.addVisit.name || null,
+            category: this.addVisit.name ? this.addVisit.category : null,
+            city: this.addVisit.city || null, country: this.addVisit.country || null,
+            country_code: this.addVisit.countryCode || null,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(err.detail || 'Failed to add visit.');
+          return;
+        }
+        this.addVisit.open = false;
+        await this.loadDay();
+      } catch (e) { console.error('Failed to add visit', e); }
+      finally { this.addVisit.saving = false; }
     },
   };
 }

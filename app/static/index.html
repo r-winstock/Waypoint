@@ -187,7 +187,20 @@
       <template x-if="day.data">
         <div class="day-columns">
           <div class="day-map-col">
-            <div id="map-container" class="day-map"></div>
+            <div class="flex items-center justify-between mb-2" style="min-height: 30px">
+              <template x-if="!addVisit.placing">
+                <button type="button" class="btn-ghost" @click="startAddVisit()">
+                  <i data-lucide="map-pin-plus" class="w-4 h-4"></i> Add visit
+                </button>
+              </template>
+              <template x-if="addVisit.placing">
+                <div class="flex items-center justify-between w-full text-xs px-3 py-1.5 rounded" style="background: var(--wp-accent); color: var(--wp-accent-contrast, #fff)">
+                  <span>Click on the map to place the visit</span>
+                  <button type="button" class="btn-icon" style="color: inherit" @click="cancelAddVisitPlacing()"><i data-lucide="x" class="w-4 h-4"></i></button>
+                </div>
+              </template>
+            </div>
+            <div id="map-container" class="day-map" :class="addVisit.placing && 'day-map-placing'"></div>
             <div class="text-xs mt-3 flex items-center gap-4 flex-wrap" style="color: var(--wp-fg-dim)">
               <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px solid currentColor"></span> Recorded GPS path</span>
               <span class="flex items-center gap-1"><span style="display:inline-block; width:18px; border-top:3px dashed currentColor"></span> Estimated route (no GPS log for that stretch)</span>
@@ -1843,6 +1856,67 @@
         <button class="btn-ghost" @click="closeConvertSegment()">Cancel</button>
         <button class="btn-primary" :disabled="segmentConvert.saving" @click="saveConvertSegment()">
           <span x-text="segmentConvert.saving ? 'Saving…' : 'Convert to visit'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ ADD VISIT MODAL ═══════════ -->
+  <div class="modal-backdrop" x-show="addVisit.open" @click.self="closeAddVisit()" style="display: none">
+    <div class="modal">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold display">Add a visit</h3>
+        <button class="btn-icon" @click="closeAddVisit()"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="field-label">Start</label>
+          <input type="datetime-local" class="field-input" x-model="addVisit.startLocal">
+        </div>
+        <div>
+          <label class="field-label">End</label>
+          <input type="datetime-local" class="field-input" x-model="addVisit.endLocal">
+        </div>
+      </div>
+
+      <label class="field-label">Location (optional - leave blank to look it up from the map pin)</label>
+      <div class="flex gap-2 mb-2">
+        <input type="text" class="field-input" placeholder="e.g. Iceland Supermarket" x-model="addVisit.searchQuery" @keydown.enter="searchAddVisitPlaces()">
+        <button type="button" class="btn-ghost" :disabled="addVisit.searching" @click="searchAddVisitPlaces()">
+          <span x-text="addVisit.searching ? 'Searching…' : 'Search'"></span>
+        </button>
+      </div>
+      <div class="mb-3">
+        <template x-for="result in addVisit.searchResults" :key="result.display_name">
+          <button type="button" class="alt-option" @click="selectAddVisitResult(result)">
+            <div class="flex items-center justify-between">
+              <span x-text="result.name"></span>
+              <span class="text-xs" style="color: var(--wp-fg-dim)" x-show="result.distance_m != null" x-text="(result.distance_m/1000).toFixed(1) + ' km'"></span>
+            </div>
+            <div class="text-xs" style="color: var(--wp-fg-dim)" x-text="result.display_name"></div>
+          </button>
+        </template>
+      </div>
+
+      <label class="field-label">Name (optional)</label>
+      <input type="text" class="field-input" x-model="addVisit.name">
+
+      <template x-if="addVisit.name">
+        <div>
+          <label class="field-label mt-2">Category</label>
+          <select class="field-input" x-model="addVisit.category">
+            <template x-for="opt in categoryOptions" :key="opt">
+              <option :value="opt" x-text="opt"></option>
+            </template>
+          </select>
+        </div>
+      </template>
+
+      <div class="flex justify-end gap-2 mt-4">
+        <button class="btn-ghost" @click="closeAddVisit()">Cancel</button>
+        <button class="btn-primary" :disabled="addVisit.saving" @click="saveAddVisit()">
+          <span x-text="addVisit.saving ? 'Saving…' : 'Add visit'"></span>
         </button>
       </div>
     </div>

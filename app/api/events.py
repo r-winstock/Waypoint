@@ -6,8 +6,9 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.db import db_dependency
-from app.geocoding import create_or_reuse_place
+from app.geocoding import create_or_reuse_place, resolve_place
 from app.models import TripSegment, Visit
+from app.processing import _rebuild_trip_segments, _rebuild_trips
 
 router = APIRouter()
 
@@ -148,3 +149,87 @@ def merge_visit_with_previous(visit_id: int, session: Session = Depends(db_depen
     session.commit()
     session.refresh(previous)
     return {"merged_into_visit_id": previous.id}
+
+
+class CreateVisit(BaseModel):
+    lat: float
+    lon: float
+    start_ts: int
+    end_ts: int
+    name: str | None = None
+    category: str | None = None
+    city: str | None = None
+    country: str | None = None
+    country_code: str | None = None
+
+
+@router.post("/api/events/visits")
+def create_visit(body: CreateVisit, session: Session = Depends(db_dependency)):
+    """Manually inserts a visit for a stay tracking missed entirely (phone
+    left at home, dead battery, a genuine background-kill dropout) - a real
+    gap in the record, not a mis-detected one, so there's nothing to
+    correct/convert/merge; a fresh row is the only way to fill it.
+
+    source="manual" so it's never touched by _rebuild_visits' full
+    OwnTracks regeneration (that would just delete it back out again on the
+    next scheduler tick), but IS picked up as a boundary by
+    _rebuild_trip_segments, which re-derives the raw-GPS legs either side of
+    it from scratch - exactly the "GPS plots flow around the new visit"
+    behaviour, reusing the same pairwise leg-building already used for
+    every other visit rather than needing any bespoke splitting logic here.
+    """
+    if body.end_ts <= body.start_ts:
+        raise HTTPException(status_code=400, detail="end_ts must be after start_ts")
+
+    overlapping = (
+        session.query(Visit)
+        .filter(Visit.start_ts < body.end_ts, Visit.end_ts > body.start_ts)
+        .all()
+    )
+    # OwnTracks/manual visits in the way are safe to clear - both are fully
+    # regenerable (owntracks by the next full reprocess, manual by this same
+    # endpoint). Imported history (google_import/kml_import/photo_import)
+    # is not - reject rather than silently delete real recorded data; the
+    # user needs to remove/adjust that entry first if it's genuinely wrong.
+    if any(v.source not in ("owntracks", "manual") for v in overlapping):
+        raise HTTPException(
+            status_code=409,
+            detail="This time range overlaps imported history - delete or correct that entry first.",
+        )
+
+    if body.name:
+        place = create_or_reuse_place(
+            session, body.lat, body.lon, body.name, body.category or "Other places",
+            body.city, body.country, body.country_code,
+        )
+    else:
+        place = resolve_place(session, body.lat, body.lon)
+
+    for v in overlapping:
+        session.delete(v)
+    session.execute(
+        delete(TripSegment).where(
+            TripSegment.source == "owntracks",
+            TripSegment.start_ts < body.end_ts,
+            TripSegment.end_ts > body.start_ts,
+        )
+    )
+
+    visit = Visit(
+        start_ts=body.start_ts,
+        end_ts=body.end_ts,
+        lat=body.lat,
+        lon=body.lon,
+        point_count=0,
+        source="manual",
+        place_id=place.id if place is not None else None,
+    )
+    session.add(visit)
+    session.flush()
+
+    _rebuild_trip_segments(session)
+    _rebuild_trips(session)
+
+    session.commit()
+    session.refresh(visit)
+    return {"visit_id": visit.id, "place_id": place.id if place is not None else None}
