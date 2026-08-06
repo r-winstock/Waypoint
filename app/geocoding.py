@@ -363,6 +363,34 @@ def _tag_home(session: Session, place: Place, lat: float, lon: float) -> None:
             return
 
 
+def _find_home_place(session: Session, lat: float, lon: float) -> Place | None:
+    """Reuses the existing "Home" place for this HomePeriod, if any, rather
+    than letting resolve_place fall through to a fresh geocode + duplicate
+    check for every new rounded-coordinate bucket GPS jitter produces near
+    home. _find_duplicate_place alone isn't enough here: it requires an
+    exact name match, but a manually-renamed canonical Home place (e.g.
+    "155 Ashmead Road") no longer matches whatever bare name Nominatim
+    returns for a nearby point ("Ashmead Road") - confirmed live, this kept
+    spawning new near-duplicate Home places (each auto-tagged "Home"
+    correctly by _tag_home, just never merged into the one that already
+    existed) every time a new rounding bucket appeared. Checked against the
+    HomePeriod's own coordinates rather than this point's, so the match
+    stays anchored to the real address regardless of how far into its
+    radius the new point happens to land."""
+    for period in session.query(HomePeriod).all():
+        if _haversine_m(lat, lon, period.lat, period.lon) > period.radius_m:
+            continue
+        existing = (
+            session.query(Place)
+            .filter(Place.category == "Home")
+            .all()
+        )
+        for place in existing:
+            if _haversine_m(place.lat_round, place.lon_round, period.lat, period.lon) <= period.radius_m:
+                return place
+    return None
+
+
 def _throttle() -> None:
     global _last_call
     wait = MIN_INTERVAL_S - (time.monotonic() - _last_call)
@@ -401,6 +429,12 @@ def resolve_place(
             cached.google_place_id = google_place_id
         _tag_home(session, cached, lat, lon)
         return cached
+
+    home_place = _find_home_place(session, lat, lon)
+    if home_place is not None:
+        if google_place_id is not None and home_place.google_place_id is None:
+            home_place.google_place_id = google_place_id
+        return home_place
 
     data = _reverse_geocode(lat, lon)
     name = category = city = country = country_code = raw_json = None
