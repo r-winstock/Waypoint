@@ -7,7 +7,7 @@ import time
 import httpx
 from sqlalchemy.orm import Session
 
-from app.google_places import resolve_new_place
+from app.google_places import GOOGLE_TYPE_TO_CATEGORY, place_details, resolve_new_place
 from app.models import HomePeriod, Place, Visit
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
@@ -457,31 +457,56 @@ def resolve_place(
         _tag_home(session, duplicate, lat, lon)
         return duplicate
 
-    # A live OwnTracks ping never carries its own Google Timeline placeId
-    # (only the historical import provides one directly) - best-effort
-    # enrich with a live Google Places lookup here anyway, since it's
-    # generally far more reliable for real businesses than a Nominatim
-    # reverse-geocode landing on the nearest road (confirmed at scale:
-    # scripts/backfill_google_places.py's ~87% hit rate re-resolving
-    # already-imported history this same way). Never a hard dependency -
-    # resolve_new_place degrades to None with no key configured, nothing
-    # found, or a failed request, leaving Nominatim's result untouched.
+    # Best-effort enrich with Google Places here, since it's generally far
+    # more reliable for real businesses than a Nominatim reverse-geocode
+    # landing on the nearest road (confirmed at scale: scripts/
+    # backfill_google_places.py's ~87% hit rate re-resolving already-
+    # imported history this same way). Never a hard dependency - both paths
+    # below degrade to None with no key configured, nothing found, or a
+    # failed request, leaving Nominatim's result untouched.
+    #
+    # A Google Timeline import always supplies its own google_place_id -
+    # Google's own precise identifier for the exact stop it recorded, not
+    # merely a cache key - so that's looked up directly via Place Details
+    # rather than re-derived from the coordinate via resolve_new_place's own
+    # nearby-search-then-details flow. This was the actual bug behind
+    # "almost every visit is wrong" on a freshly-imported trip (confirmed
+    # live, an Amsterdam import): resolve_place used to skip Google
+    # enrichment entirely whenever a google_place_id was already present -
+    # exactly backwards, since that's precisely the case where Google
+    # already knows the specific business and a raw-coordinate lookup (from
+    # either source) is what's most likely to snap to the wrong nearby
+    # building in a dense area. A live OwnTracks ping never carries its own
+    # placeId, so it still goes through resolve_new_place as before.
+    #
     # name is preferred outright when Google has one (same as the backfill
     # script), except when it's just the place's own city name again (a
     # known failure mode where a placeId resolves to a too-broad locality/
     # transit-hub entry rather than the specific spot - see that script's
-    # own guard for the same issue found live). category only replaces the
-    # generic "Other places" default - an OSM tag that already resolved a
-    # real category isn't worth second-guessing.
-    if google_place_id is None:
+    # own guard for the same issue found live). category only replaces a
+    # still-generic result ("Other places"/"Streets and roads" - see
+    # CATEGORY_RULES; the same generic-bucket set the backfill script uses,
+    # minus "Transport" since that's not produced by this live path).
+    if google_place_id is not None:
+        details = place_details(google_place_id)
+        google_result = None
+        if details is not None:
+            google_result = {
+                "name": (details.get("displayName") or {}).get("text"),
+                "category": GOOGLE_TYPE_TO_CATEGORY.get(details.get("primaryType")),
+                "google_place_id": details.get("id") or google_place_id,
+            }
+    else:
         google_result = resolve_new_place(lat, lon)
-        if google_result:
-            g_name = google_result.get("name")
-            if g_name and not (city and g_name.strip().lower() == city.strip().lower()):
-                name = g_name
-            if google_result.get("category") and category == "Other places":
-                category = google_result["category"]
-            google_place_id = google_result.get("google_place_id")
+
+    if google_result:
+        g_name = google_result.get("name")
+        if g_name and not (city and g_name.strip().lower() == city.strip().lower()):
+            name = g_name
+        if google_result.get("category") and category in ("Other places", "Streets and roads"):
+            category = google_result["category"]
+        if google_result.get("google_place_id"):
+            google_place_id = google_result["google_place_id"]
 
     place = Place(
         lat_round=lat_r,
