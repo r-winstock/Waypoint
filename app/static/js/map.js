@@ -527,6 +527,19 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
       // the path taken, not something GPS actually recorded, and the dash
       // is the only remaining signal for that now colour is mode-only.
       wpAddLayer(map, wpCasedPolyline(routed, color, { dashArray: '4 8' }));
+    } else if (useRail) {
+      // No connected rail line found (confirmed live: a genuine
+      // international journey - Amsterdam to London St Pancras - where
+      // Overpass has no way to bridge two national rail networks across
+      // open water). The straight-line fallback still drawn for every
+      // other mode is a reasonable stand-in for a short local hop, but for
+      // a route this long it reads as a flight path, not a train - actively
+      // misleading rather than merely approximate. Dropped rather than
+      // left in place: a gap is more honest than confidently-wrong data,
+      // the same principle the Google Timeline import already follows for
+      // its own low-confidence timelinePath fallback.
+      map.removeLayer(line);
+      map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
     }
   });
 
