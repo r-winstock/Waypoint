@@ -531,15 +531,23 @@ async function wpRenderDayMap(map, points, timeline, contextVisits = {}, photos 
       // No connected rail line found (confirmed live: a genuine
       // international journey - Amsterdam to London St Pancras - where
       // Overpass has no way to bridge two national rail networks across
-      // open water). The straight-line fallback still drawn for every
-      // other mode is a reasonable stand-in for a short local hop, but for
-      // a route this long it reads as a flight path, not a train - actively
-      // misleading rather than merely approximate. Dropped rather than
-      // left in place: a gap is more honest than confidently-wrong data,
-      // the same principle the Google Timeline import already follows for
-      // its own low-confidence timelinePath fallback.
+      // open water). The mode-coloured straight-line fallback every other
+      // segment gets is a reasonable stand-in for a short local hop, but
+      // for a route this long it reads as a flight path, not a train.
+      // Dropping the line outright (tried first) swung too far the other
+      // way - confirmed live, Richard's own reaction was "the train journey
+      // is not visible AT ALL", losing the one thing that mattered (these
+      // two real places ARE connected by a real, if geometrically unknown,
+      // journey). Restyled instead: thin, muted neutral grey, sparse dots -
+      // deliberately unlike both a confident route guess (this app's own
+      // per-mode colour + '6 6'/'4 8' dashing) and how "flying" itself
+      // renders, so it reads as "connected, path unrecorded" rather than
+      // either "here's the path" or "nothing happened here".
       map.removeLayer(line);
       map._wpLayers = (map._wpLayers || []).filter((l) => l !== line);
+      const dimColor = getComputedStyle(document.documentElement).getPropertyValue('--wp-fg-dim').trim() || '#94a3b8';
+      const straight = [[prevVisit.lat, prevVisit.lon], [nextVisit.lat, nextVisit.lon]];
+      wpAddLayer(map, L.polyline(straight, { color: dimColor, weight: 2, opacity: 0.6, dashArray: '1 9' }));
     }
   });
 

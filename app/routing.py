@@ -41,6 +41,36 @@ RAIL_TAGS = {
 # without ballooning query size.
 BBOX_MARGIN_DEG = 0.15
 
+# A fixed margin is fine for a regional hop but wrong for a genuine long-haul
+# journey: real rail routes routinely detour well outside the endpoints' own
+# straight-line box (a mountain pass, a coastline, a border crossing) - a
+# fixed 0.15 degrees left Amsterdam-London (346mi via Brussels and the
+# Channel Tunnel, which dips south of London itself to reach Calais/
+# Folkestone) with no chance of ever finding a connected route, confirmed
+# live: Overpass had nothing to work with because the tunnel corridor simply
+# wasn't in the box at all. Scales the margin with the endpoints' own
+# straight-line distance instead, floored at BBOX_MARGIN_DEG for short hops
+# and capped so a truly enormous distance (a flight misclassified as a
+# train, say) doesn't turn into an unbounded Overpass query.
+MARGIN_DISTANCE_FRACTION = 0.25
+MAX_BBOX_MARGIN_DEG = 2.5
+
+
+def _bbox_margin_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    distance_km = _haversine_m(lat1, lon1, lat2, lon2) / 1000.0
+    scaled_deg = (distance_km * MARGIN_DISTANCE_FRACTION) / 111.0
+    return min(max(BBOX_MARGIN_DEG, scaled_deg), MAX_BBOX_MARGIN_DEG)
+
+
+# Light rail/tram networks don't span this far - past it, a "train" query
+# only asks for mainline "rail" and drops "light_rail" entirely. Confirmed
+# live this was the real cost driver for a long-haul box, not the box size
+# alone: Amsterdam-London's widened bbox covers three cities' worth of dense
+# metro/tram network (Amsterdam, Brussels, London) that a genuine 346-mile
+# inter-city journey was never going to use anyway, and Overpass timed out
+# trying to return all of it.
+LIGHT_RAIL_MAX_KM = 50.0
+
 # If neither visit is within this of the rail network Overpass returned,
 # treat it as "no usable rail data here" rather than snapping to a distant,
 # unrelated line.
@@ -76,18 +106,37 @@ class RailFetchError(Exception):
 
 def _fetch_rail_ways(mode: str, lat1: float, lon1: float, lat2: float, lon2: float) -> list[list[tuple[float, float]]]:
     tag_filter = RAIL_TAGS.get(mode, "rail|light_rail")
+    distance_km = _haversine_m(lat1, lon1, lat2, lon2) / 1000.0
+    if distance_km > LIGHT_RAIL_MAX_KM:
+        tag_filter = tag_filter.replace("|light_rail", "")
+    margin = _bbox_margin_deg(lat1, lon1, lat2, lon2)
     min_lat, max_lat = sorted([lat1, lat2])
     min_lon, max_lon = sorted([lon1, lon2])
-    south, west = min_lat - BBOX_MARGIN_DEG, min_lon - BBOX_MARGIN_DEG
-    north, east = max_lat + BBOX_MARGIN_DEG, max_lon + BBOX_MARGIN_DEG
+    south, west = min_lat - margin, min_lon - margin
+    north, east = max_lat + margin, max_lon + margin
+    # timeout scales with the query itself for the same reason the bbox
+    # does - a long-haul box covering a real international detour returns
+    # far more data than a regional hop's, and the original fixed 20s
+    # Overpass-side budget (25s client-side) was tuned for that smaller
+    # case.
+    # Capped well below Overpass's own apparent ceiling for the [timeout:X]
+    # request parameter - a couple of manual probes above ~45 got an
+    # immediate 406 rather than a slow answer, suggesting the public
+    # instance rejects an overly ambitious ask outright rather than just
+    # taking its time (unconfirmed precisely - those probes were likely
+    # also caught by rate-limiting from hitting the same endpoint
+    # repeatedly - but there's no upside to testing that ceiling here).
+    overpass_timeout = 20 if margin <= BBOX_MARGIN_DEG else min(45, int(20 + margin * 15))
     query = f"""
-    [out:json][timeout:20];
+    [out:json][timeout:{overpass_timeout}];
     way["railway"~"^({tag_filter})$"]({south},{west},{north},{east});
     out geom;
     """
     _throttle()
     try:
-        resp = httpx.post(OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=25.0)
+        resp = httpx.post(
+            OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=overpass_timeout + 5.0
+        )
         resp.raise_for_status()
         data = resp.json()
     except (httpx.HTTPError, ValueError) as e:
