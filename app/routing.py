@@ -286,8 +286,18 @@ def _compute_rail_route_via_hubs(
             continue  # too close to one end to be a useful split point
         if (d1 + d2) > direct_dist * MAX_HUB_DETOUR_RATIO:
             continue  # too far out of the way to plausibly be on this route
-        if best is None or (d1 + d2) < best[0]:
-            best = (d1 + d2, hlat, hlon)
+        # Score by the WORST remaining leg, not total detour distance.
+        # Minimising d1+d2 picks whichever hub sits closest to the direct
+        # line - confirmed live this picks Rotterdam for Amsterdam-London
+        # (d1=58km, d2=319km) purely because it barely detours, but leaves
+        # the 319km London leg almost as hard as the original 357km problem
+        # with one fewer hop to solve it. Minimising max(d1,d2) instead
+        # picks the hub that most evenly halves the journey (Lille-Europe:
+        # 231km/245km) so each remaining leg is a genuinely smaller
+        # sub-problem, not a near-copy of the one that just failed.
+        worst_leg = max(d1, d2)
+        if best is None or worst_leg < best[0]:
+            best = (worst_leg, hlat, hlon)
     if best is None:
         return None, any_success
 
