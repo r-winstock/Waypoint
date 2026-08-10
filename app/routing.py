@@ -132,15 +132,35 @@ def _fetch_rail_ways(mode: str, lat1: float, lon1: float, lat2: float, lon2: flo
     way["railway"~"^({tag_filter})$"]({south},{west},{north},{east});
     out geom;
     """
-    _throttle()
-    try:
-        resp = httpx.post(
-            OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=overpass_timeout + 5.0
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except (httpx.HTTPError, ValueError) as e:
-        raise RailFetchError(str(e)) from e
+    data = None
+    last_error: Exception | None = None
+    # A 502/503/504 from Overpass means the shared public instance was
+    # briefly overloaded, not that this query is inherently too big -
+    # confirmed live: a 93km Lille-Calais hop (a modest box, nowhere near
+    # the long-haul case above) got a 504 on one attempt. One retry after a
+    # short backoff distinguishes "genuinely unroutable corridor" from
+    # "server was busy for a second" instead of giving up on the first hit.
+    for attempt in range(2):
+        _throttle()
+        try:
+            resp = httpx.post(
+                OVERPASS_URL, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=overpass_timeout + 5.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            last_error = None
+            break
+        except httpx.HTTPStatusError as e:
+            last_error = e
+            if attempt == 0 and e.response is not None and e.response.status_code in (502, 503, 504):
+                time.sleep(3.0)
+                continue
+            break
+        except (httpx.HTTPError, ValueError) as e:
+            last_error = e
+            break
+    if last_error is not None:
+        raise RailFetchError(str(last_error)) from last_error
 
     ways = []
     for el in data.get("elements", []):
