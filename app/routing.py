@@ -229,6 +229,105 @@ def compute_rail_route(
     return [coords[k] for k in path]
 
 
+# A handful of major European interchange stations - Richard's own idea,
+# confirmed live: breaking Amsterdam-London into Amsterdam-Brussels (already
+# proven to snap cleanly on its own, ~5s, a real 4962-point route) and
+# Brussels-London keeps each individual Overpass query small enough to
+# finish inside the timeout ceiling _bbox_margin_deg alone can't buy its way
+# past for a single 346-mile international query. Coordinates from
+# Nominatim, not typed from memory, to avoid a transcription error quietly
+# breaking the snap. Deliberately small and UK-centric (Richard's own
+# likely routes) rather than a general worldwide gazetteer - easy to extend
+# later if a genuinely new corridor comes up, not worth over-building now.
+MAJOR_RAIL_HUBS = [
+    ("Brussel-Zuid", 50.8364402, 4.3370087),
+    ("Rotterdam Centraal", 51.9250574, 4.4692289),
+    ("Lille-Europe", 50.6389830, 3.0757140),
+    ("Calais-Frethun", 50.9019122, 1.8114399),
+    ("Ashford International", 51.1439841, 0.8758572),
+]
+
+# A hub only helps if it's genuinely between the endpoints (both legs
+# shorter than going direct) and far enough from either end that it isn't
+# just re-splitting the same query - a hub 500m from the destination buys
+# nothing and wastes a call.
+MIN_HUB_DISTANCE_M = 5_000.0
+MAX_HUB_DETOUR_RATIO = 1.6
+MAX_HUB_HOPS = 3
+
+
+def _compute_rail_route_via_hubs(
+    mode: str, lat1: float, lon1: float, lat2: float, lon2: float, hops_remaining: int
+) -> tuple[list[tuple[float, float]] | None, bool]:
+    """Returns (route, any_query_succeeded). The second value is what lets
+    the top-level caller tell "genuinely no connected route, safe to cache
+    forever" apart from "every single attempt - direct and every hub - hit
+    a live Overpass failure", which should be retried later rather than
+    trusted as permanent (see RailFetchError's own docstring)."""
+    any_success = False
+    try:
+        direct = compute_rail_route(mode, lat1, lon1, lat2, lon2)
+        any_success = True
+    except RailFetchError:
+        direct = None
+    if direct:
+        return direct, True
+    if hops_remaining <= 0:
+        return None, any_success
+
+    direct_dist = _haversine_m(lat1, lon1, lat2, lon2)
+    best = None
+    for name, hlat, hlon in MAJOR_RAIL_HUBS:
+        d1 = _haversine_m(lat1, lon1, hlat, hlon)
+        d2 = _haversine_m(hlat, hlon, lat2, lon2)
+        if d1 >= direct_dist or d2 >= direct_dist:
+            continue  # not actually between the two endpoints
+        if d1 < MIN_HUB_DISTANCE_M or d2 < MIN_HUB_DISTANCE_M:
+            continue  # too close to one end to be a useful split point
+        if (d1 + d2) > direct_dist * MAX_HUB_DETOUR_RATIO:
+            continue  # too far out of the way to plausibly be on this route
+        if best is None or (d1 + d2) < best[0]:
+            best = (d1 + d2, hlat, hlon)
+    if best is None:
+        return None, any_success
+
+    _, hub_lat, hub_lon = best
+    first_half, first_ok = _compute_rail_route_via_hubs(mode, lat1, lon1, hub_lat, hub_lon, hops_remaining - 1)
+    any_success = any_success or first_ok
+    if not first_half:
+        return None, any_success
+    second_half, second_ok = _compute_rail_route_via_hubs(mode, hub_lat, hub_lon, lat2, lon2, hops_remaining - 1)
+    any_success = any_success or second_ok
+    if not second_half:
+        return None, any_success
+    return first_half + second_half[1:], True  # second_half[0] duplicates the shared hub point
+
+
+def compute_rail_route_via_hubs(
+    mode: str, lat1: float, lon1: float, lat2: float, lon2: float, hops_remaining: int = MAX_HUB_HOPS
+) -> list[tuple[float, float]] | None:
+    """Same as compute_rail_route, but on a direct-route miss, tries routing
+    via the single best-fitting major hub instead of giving up outright -
+    recursing on each half (bounded by hops_remaining) so a genuinely
+    multi-hop international journey (Amsterdam-Brussels-London) resolves
+    through repeated short, fast, individually-reliable queries rather than
+    one huge one. Only the single closest-to-the-direct-line candidate is
+    tried at each level, not every hub in the list - each attempt costs at
+    least one live Overpass call, and Overpass's own rate-limiting (hit
+    twice already just testing this) is a real, easy-to-trip constraint,
+    not merely a performance nicety to optimise away.
+
+    Raises RailFetchError (rather than returning None) if every attempt -
+    direct and every hub candidate tried - failed to get a real answer from
+    Overpass, so the caller's own "don't permanently cache a transient
+    failure" handling still applies; a clean None only ever means every
+    query that ran actually got an answer, just not a connected one."""
+    route, any_success = _compute_rail_route_via_hubs(mode, lat1, lon1, lat2, lon2, hops_remaining)
+    if route is None and not any_success:
+        raise RailFetchError("Every direct/hub attempt failed to reach Overpass")
+    return route
+
+
 def get_or_fetch_rail_route(
     session: Session, segment_id: int, mode: str, lat1: float, lon1: float, lat2: float, lon2: float
 ) -> CachedRoute:
@@ -237,11 +336,18 @@ def get_or_fetch_rail_route(
         return cached
 
     try:
-        points = compute_rail_route(mode, lat1, lon1, lat2, lon2)
+        points = compute_rail_route_via_hubs(mode, lat1, lon1, lat2, lon2)
     except RailFetchError:
-        # Overpass itself failed - return an unsaved result so the next
-        # request retries fresh rather than trusting a transient failure as
-        # a permanent "no route" forever (see RailFetchError's docstring).
+        # Overpass itself failed on every attempt (direct and every hub
+        # candidate) - return an unsaved result so the next request retries
+        # fresh rather than trusting a transient failure as a permanent "no
+        # route" forever (see RailFetchError's docstring). Should be rare in
+        # practice: compute_rail_route_via_hubs already swallows a
+        # RailFetchError on its own *direct* attempt internally (that's the
+        # normal, expected path into hub-splitting, not a failure worth
+        # surfacing) - this only catches something failing hard enough that
+        # every fallback attempt also blew up, e.g. Overpass genuinely
+        # unreachable rather than merely slow for one big query.
         return CachedRoute(segment_id=segment_id, mode=mode, points_json=None, found=False, fetched_at=int(time.time()))
 
     cached = CachedRoute(
