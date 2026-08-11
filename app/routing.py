@@ -18,7 +18,7 @@ import time
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models import CachedRoute
+from app.models import CachedRoute, LegRouteCache
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 USER_AGENT = "Waypoint/0.1 (self-hosted personal timeline; contact rwinstock@hotmail.com)"
@@ -286,9 +286,53 @@ MIN_HUB_DISTANCE_M = 5_000.0
 MAX_HUB_DETOUR_RATIO = 1.6
 MAX_HUB_HOPS = 3
 
+# Endpoints are rounded before hitting LegRouteCache so the same hub
+# constant (or the same segment's own visit coordinates, recomputed after
+# a page reload) reliably lands on the same row - 5dp is ~1m, far tighter
+# than any real snap tolerance, so this never merges two genuinely
+# different endpoints.
+_LEG_CACHE_COORD_DP = 5
+
+
+def _get_or_compute_leg(
+    session: Session, mode: str, lat1: float, lon1: float, lat2: float, lon2: float
+) -> list[tuple[float, float]] | None:
+    """Wraps compute_rail_route with LegRouteCache - see that model's
+    docstring for why a hub-chained route needs per-leg caching, not just
+    the top-level segment cache CachedRoute already provides. Only a
+    genuine answer from Overpass (found or not) is cached; a RailFetchError
+    propagates uncached, exactly like compute_rail_route_via_hubs's own
+    top-level failure handling, so a transient blip is never trusted as
+    permanent."""
+    lat1_r, lon1_r = round(lat1, _LEG_CACHE_COORD_DP), round(lon1, _LEG_CACHE_COORD_DP)
+    lat2_r, lon2_r = round(lat2, _LEG_CACHE_COORD_DP), round(lon2, _LEG_CACHE_COORD_DP)
+    cached = (
+        session.query(LegRouteCache)
+        .filter_by(mode=mode, lat1=lat1_r, lon1=lon1_r, lat2=lat2_r, lon2=lon2_r)
+        .one_or_none()
+    )
+    if cached is not None:
+        return json.loads(cached.points_json) if cached.found and cached.points_json else None
+
+    points = compute_rail_route(mode, lat1, lon1, lat2, lon2)  # RailFetchError propagates uncached
+    session.add(
+        LegRouteCache(
+            mode=mode,
+            lat1=lat1_r,
+            lon1=lon1_r,
+            lat2=lat2_r,
+            lon2=lon2_r,
+            points_json=json.dumps(points) if points else None,
+            found=points is not None,
+            fetched_at=int(time.time()),
+        )
+    )
+    session.flush()
+    return points
+
 
 def _compute_rail_route_via_hubs(
-    mode: str, lat1: float, lon1: float, lat2: float, lon2: float, hops_remaining: int
+    session: Session, mode: str, lat1: float, lon1: float, lat2: float, lon2: float, hops_remaining: int
 ) -> tuple[list[tuple[float, float]] | None, bool]:
     """Returns (route, any_query_succeeded). The second value is what lets
     the top-level caller tell "genuinely no connected route, safe to cache
@@ -297,7 +341,7 @@ def _compute_rail_route_via_hubs(
     trusted as permanent (see RailFetchError's own docstring)."""
     any_success = False
     try:
-        direct = compute_rail_route(mode, lat1, lon1, lat2, lon2)
+        direct = _get_or_compute_leg(session, mode, lat1, lon1, lat2, lon2)
         any_success = True
     except RailFetchError:
         direct = None
@@ -333,11 +377,15 @@ def _compute_rail_route_via_hubs(
         return None, any_success
 
     _, hub_lat, hub_lon = best
-    first_half, first_ok = _compute_rail_route_via_hubs(mode, lat1, lon1, hub_lat, hub_lon, hops_remaining - 1)
+    first_half, first_ok = _compute_rail_route_via_hubs(
+        session, mode, lat1, lon1, hub_lat, hub_lon, hops_remaining - 1
+    )
     any_success = any_success or first_ok
     if not first_half:
         return None, any_success
-    second_half, second_ok = _compute_rail_route_via_hubs(mode, hub_lat, hub_lon, lat2, lon2, hops_remaining - 1)
+    second_half, second_ok = _compute_rail_route_via_hubs(
+        session, mode, hub_lat, hub_lon, lat2, lon2, hops_remaining - 1
+    )
     any_success = any_success or second_ok
     if not second_half:
         return None, any_success
@@ -345,7 +393,7 @@ def _compute_rail_route_via_hubs(
 
 
 def compute_rail_route_via_hubs(
-    mode: str, lat1: float, lon1: float, lat2: float, lon2: float, hops_remaining: int = MAX_HUB_HOPS
+    session: Session, mode: str, lat1: float, lon1: float, lat2: float, lon2: float, hops_remaining: int = MAX_HUB_HOPS
 ) -> list[tuple[float, float]] | None:
     """Same as compute_rail_route, but on a direct-route miss, tries routing
     via the single best-fitting major hub instead of giving up outright -
@@ -363,7 +411,7 @@ def compute_rail_route_via_hubs(
     Overpass, so the caller's own "don't permanently cache a transient
     failure" handling still applies; a clean None only ever means every
     query that ran actually got an answer, just not a connected one."""
-    route, any_success = _compute_rail_route_via_hubs(mode, lat1, lon1, lat2, lon2, hops_remaining)
+    route, any_success = _compute_rail_route_via_hubs(session, mode, lat1, lon1, lat2, lon2, hops_remaining)
     if route is None and not any_success:
         raise RailFetchError("Every direct/hub attempt failed to reach Overpass")
     return route
@@ -377,7 +425,7 @@ def get_or_fetch_rail_route(
         return cached
 
     try:
-        points = compute_rail_route_via_hubs(mode, lat1, lon1, lat2, lon2)
+        points = compute_rail_route_via_hubs(session, mode, lat1, lon1, lat2, lon2)
     except RailFetchError:
         # Overpass itself failed on every attempt (direct and every hub
         # candidate) - return an unsaved result so the next request retries

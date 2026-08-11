@@ -222,6 +222,44 @@ class CachedImage(Base):
     fetched_at: Mapped[int] = mapped_column(Integer)
 
 
+class LegRouteCache(Base):
+    """A snapped rail path for one leg of a hub-chained rail route (see
+    compute_rail_route_via_hubs in app/routing.py) - keyed by rounded
+    endpoint coordinates + mode, not segment_id like CachedRoute, since a
+    leg here is usually a hub-to-hub or endpoint-to-hub pair with no
+    TripSegment of its own. Without this, every fresh attempt at an
+    uncached top-level segment re-ran the entire hub search from scratch,
+    including legs (a fixed hub pair, say) that an earlier attempt at the
+    same segment - or a completely different segment sharing a hub - had
+    already proven work. That mattered in practice: a long international
+    route can need 7+ sequential Overpass calls in one pass, and on the
+    free public instance (occasionally slow/overloaded, confirmed live),
+    the odds of every single one landing together in one attempt are much
+    worse than any individual call's own odds. Once a leg is proven, it
+    should never need fetching again.
+
+    found=False is itself a cached result, same reasoning as CachedRoute.
+    Endpoints are rounded to 5dp (~1m) so the same hub constant or the
+    same segment's visit coordinates reliably hit the same row; a leg is
+    only ever looked up in the exact direction it was computed in
+    (A->B and B->A are separate rows) - simpler than normalising
+    direction, and hubs are chained consistently enough in practice that
+    this still catches the vast majority of repeat lookups."""
+
+    __tablename__ = "leg_route_cache"
+    __table_args__ = (UniqueConstraint("mode", "lat1", "lon1", "lat2", "lon2", name="uq_leg_route_cache_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16))
+    lat1: Mapped[float] = mapped_column(Float, index=True)
+    lon1: Mapped[float] = mapped_column(Float)
+    lat2: Mapped[float] = mapped_column(Float)
+    lon2: Mapped[float] = mapped_column(Float)
+    points_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    found: Mapped[bool] = mapped_column(default=False)
+    fetched_at: Mapped[int] = mapped_column(Integer)
+
+
 class CachedRoute(Base):
     """A snapped rail path for a single train/subway/tram TripSegment,
     computed via Overpass + a small self-built graph search - see
