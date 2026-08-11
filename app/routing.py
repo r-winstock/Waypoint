@@ -134,12 +134,17 @@ def _fetch_rail_ways(mode: str, lat1: float, lon1: float, lat2: float, lon2: flo
     """
     data = None
     last_error: Exception | None = None
-    # A 502/503/504 from Overpass means the shared public instance was
-    # briefly overloaded, not that this query is inherently too big -
-    # confirmed live: a 93km Lille-Calais hop (a modest box, nowhere near
-    # the long-haul case above) got a 504 on one attempt. One retry after a
-    # short backoff distinguishes "genuinely unroutable corridor" from
-    # "server was busy for a second" instead of giving up on the first hit.
+    # A 502/503/504, or a plain client-side read timeout, from Overpass
+    # means the shared public instance was briefly overloaded, not that
+    # this query is inherently too big - confirmed live: a 93km
+    # Lille-Calais hop got a 504 on one attempt, and separately, on a
+    # different day, a 231km Amsterdam-Lille hop that had already
+    # succeeded once before timed out client-side (no response at all
+    # within the budget) rather than getting a 5xx - same underlying
+    # "server was busy" cause, just surfaced as httpx.TimeoutException
+    # instead of an HTTP status. One retry after a short backoff covers
+    # both shapes of transient failure instead of giving up on the first
+    # hit of either.
     for attempt in range(2):
         _throttle()
         try:
@@ -153,6 +158,12 @@ def _fetch_rail_ways(mode: str, lat1: float, lon1: float, lat2: float, lon2: flo
         except httpx.HTTPStatusError as e:
             last_error = e
             if attempt == 0 and e.response is not None and e.response.status_code in (502, 503, 504):
+                time.sleep(3.0)
+                continue
+            break
+        except httpx.TimeoutException as e:
+            last_error = e
+            if attempt == 0:
                 time.sleep(3.0)
                 continue
             break
