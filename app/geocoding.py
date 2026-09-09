@@ -411,8 +411,20 @@ def resolve_place(
     """
 
     if google_place_id is not None:
+        # .first() (ordered, not .one_or_none()) because the DB has genuine
+        # duplicate rows sharing a google_place_id, accumulated from before
+        # this lookup existed (each import cycle's coordinate-rounding drift
+        # used to create a fresh row per placeId instead of reusing one) -
+        # confirmed live, 69 groups, up to 7 rows deep. That's a real data
+        # problem worth a proper merge pass, but resolve_place's own job here
+        # is just "don't crash mid-import" - picking the lowest id
+        # deterministically at least always returns the same (oldest) row on
+        # repeat lookups rather than an arbitrary one.
         cached_by_id = (
-            session.query(Place).filter(Place.google_place_id == google_place_id).one_or_none()
+            session.query(Place)
+            .filter(Place.google_place_id == google_place_id)
+            .order_by(Place.id)
+            .first()
         )
         if cached_by_id is not None:
             _tag_home(session, cached_by_id, lat, lon)
@@ -422,7 +434,8 @@ def resolve_place(
     cached = (
         session.query(Place)
         .filter(Place.lat_round == lat_r, Place.lon_round == lon_r)
-        .one_or_none()
+        .order_by(Place.id)
+        .first()
     )
     if cached is not None:
         if google_place_id is not None and cached.google_place_id is None:
