@@ -57,6 +57,18 @@ def pick_winner(rows: list[Place]) -> Place:
     return rows[0]
 
 
+def has_conflicting_names(rows: list[Place]) -> bool:
+    """Multiple manually_corrected rows sharing one google_place_id are
+    usually the same real place independently corrected more than once (safe
+    to merge onto any of them) - but confirmed live, one group was a genuine
+    McDonald's-vs-Sainsbury's conflict, ~55m apart, sharing a placeId Google
+    itself mismatched for one visit. Auto-merging that would silently
+    relabel one business as the other, so any group where the corrected
+    rows disagree on name gets skipped entirely rather than merged."""
+    corrected_names = {r.name for r in rows if r.manually_corrected}
+    return len(corrected_names) > 1
+
+
 def run(apply: bool) -> None:
     session = SessionLocal()
     groups = find_duplicate_groups(session)
@@ -64,18 +76,27 @@ def run(apply: bool) -> None:
 
     total_visits_repointed = 0
     total_rows_deleted = 0
-    ambiguous = []
+    redundant_corrections = []
+    skipped_conflicts = []
 
     for rows in groups:
+        corrected_count = sum(1 for r in rows if r.manually_corrected)
+
+        if corrected_count > 1 and has_conflicting_names(rows):
+            skipped_conflicts.append(rows)
+            print(f"  SKIPPED (conflicting names): google_place_id {rows[0].google_place_id}")
+            for r in rows:
+                print(f"    id={r.id} name={r.name!r} manually_corrected={r.manually_corrected}")
+            continue
+
         winner = pick_winner(rows)
         losers = [r for r in rows if r.id != winner.id]
-        corrected_count = sum(1 for r in rows if r.manually_corrected)
         if corrected_count > 1:
-            ambiguous.append(rows)
+            redundant_corrections.append(rows)
 
         for loser in losers:
             visits = session.query(Visit).filter(Visit.place_id == loser.id).all()
-            flag = " [AMBIGUOUS: multiple manually_corrected rows]" if corrected_count > 1 else ""
+            flag = " [redundant duplicate correction]" if corrected_count > 1 else ""
             print(f"  {winner.name!r} (winner id={winner.id}) <- id={loser.id} ({len(visits)} visits){flag}")
             if apply:
                 for v in visits:
@@ -90,9 +111,9 @@ def run(apply: bool) -> None:
     else:
         print(f"\nDry run: would repoint {total_visits_repointed} visits, delete {total_rows_deleted} duplicate rows")
 
-    if ambiguous:
-        print(f"\n{len(ambiguous)} group(s) had multiple manually_corrected rows - review these:")
-        for rows in ambiguous:
+    if skipped_conflicts:
+        print(f"\n{len(skipped_conflicts)} group(s) SKIPPED - conflicting names, needs manual review:")
+        for rows in skipped_conflicts:
             print(f"  google_place_id group ({rows[0].google_place_id}):")
             for r in rows:
                 print(f"    id={r.id} name={r.name!r} manually_corrected={r.manually_corrected}")
