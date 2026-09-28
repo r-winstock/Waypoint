@@ -244,6 +244,50 @@ function waypoint() {
       return { level: 'ok', message: 'Tracking is up to date.' };
     },
 
+    // ─── Timeline export import ───
+    // Replaces the old manual workflow (scp a 150-200MB file to the server,
+    // find a safe cutoff by hand, run a script) with a plain upload: the
+    // server auto-detects what's genuinely new and streams progress back
+    // here while it works, since a fresh export can take several minutes.
+    importJob: null,
+    importPollTimer: null,
+    async loadImportStatus() {
+      try {
+        const res = await fetch('/api/import/google-timeline/status');
+        const data = await res.json();
+        if (data.status === 'idle') return;
+        this.importJob = data;
+        if (data.status === 'running') this._pollImportStatus();
+      } catch (e) { console.error('Failed to load import status', e); }
+    },
+    _pollImportStatus() {
+      clearTimeout(this.importPollTimer);
+      this.importPollTimer = setTimeout(async () => {
+        await this.loadImportStatus();
+        if (this.importJob && this.importJob.status === 'running') this._pollImportStatus();
+      }, 2000);
+    },
+    async uploadTimelineExport() {
+      const input = this.$refs.timelineFile;
+      const file = input.files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append('file', file);
+      this.importJob = { status: 'running', filename: file.name, progress: null };
+      try {
+        const res = await fetch('/api/import/google-timeline', { method: 'POST', body });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          this.importJob = { status: 'error', error: err.detail || `HTTP ${res.status}` };
+          return;
+        }
+        input.value = '';
+        this._pollImportStatus();
+      } catch (e) {
+        this.importJob = { status: 'error', error: String(e) };
+      }
+    },
+
     // ─── formatters exposed to templates ───
     formatMiles,
     formatDuration,
@@ -418,7 +462,7 @@ function waypoint() {
       // Always refetch (not just "if not loaded") - staleness is exactly
       // what this page exists to surface, so it should never show a stale
       // snapshot from an earlier tab visit.
-      if (tab === 'diagnostics') this.loadDiagnostics();
+      if (tab === 'diagnostics') { this.loadDiagnostics(); this.loadImportStatus(); }
 
       this.$nextTick(() => {
         if (tab === 'day' && this.day.map) this.day.map.invalidateSize();

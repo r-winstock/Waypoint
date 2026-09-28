@@ -763,3 +763,6 @@ h1, h2, h3, .display {
 .diag-log-warning .diag-log-level { color: var(--wp-warn); }
 .diag-log-error .diag-log-level, .diag-log-critical .diag-log-level { color: var(--wp-danger); }
 .diag-log-message { color: var(--wp-fg-secondary); word-break: break-word; font-family: var(--wp-font-mono); font-size: 11px; }
+
+@keyframes wp-spin { to { transform: rotate(360deg); } }
+.spin { animation: wp-spin 1s linear infinite; }

@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import cities, day, diagnostics, events, images, insights, places, routing, settings, trips, world
+from app.api import cities, day, diagnostics, events, images, import_timeline, insights, places, routing, settings, trips, world
 from app.api.diagnostics import install_log_buffer
 from app.db import get_session, init_db
 from app.ingest import router as ingest_router
@@ -65,6 +65,7 @@ app.include_router(cities.router)
 app.include_router(world.router)
 app.include_router(settings.router)
 app.include_router(diagnostics.router)
+app.include_router(import_timeline.router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

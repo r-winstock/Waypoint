@@ -1564,6 +1564,42 @@
         <button class="btn-icon" @click="loadDiagnostics()" title="Refresh"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
       </div>
 
+      <div class="card mb-6 p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-base font-semibold">Import Google Timeline export</h2>
+        </div>
+        <div class="text-xs mb-3" style="color: var(--wp-fg-dim)">
+          From your phone: Settings &rarr; Location &rarr; Timeline &rarr; Export Timeline data. Only whatever's genuinely new since the last import gets added - no need to find a cutoff date yourself.
+        </div>
+        <template x-if="!importJob || importJob.status === 'idle'">
+          <div class="flex items-center gap-2">
+            <input type="file" accept=".json" x-ref="timelineFile" class="text-xs" />
+            <button class="btn-primary" @click="uploadTimelineExport()">Import</button>
+          </div>
+        </template>
+        <template x-if="importJob && importJob.status === 'running'">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <i data-lucide="loader-2" class="w-4 h-4 spin"></i>
+              <span x-text="'Importing ' + (importJob.filename || 'export') + '…'"></span>
+            </div>
+            <div class="text-xs" style="color: var(--wp-fg-dim)" x-text="importJob.progress ? (importJob.progress.visits + ' visits, ' + importJob.progress.segments + ' segments so far') : 'Starting…'"></div>
+          </div>
+        </template>
+        <template x-if="importJob && importJob.status === 'done'">
+          <div>
+            <div class="text-sm mb-2" x-text="'Done: ' + importJob.result.visits + ' visits, ' + importJob.result.segments + ' segments imported, ' + importJob.result.skipped + ' skipped.'"></div>
+            <button class="btn-ghost" @click="importJob = null">Import another</button>
+          </div>
+        </template>
+        <template x-if="importJob && importJob.status === 'error'">
+          <div>
+            <div class="text-sm mb-2" style="color: var(--wp-danger)" x-text="'Import failed: ' + importJob.error"></div>
+            <button class="btn-ghost" @click="importJob = null">Try again</button>
+          </div>
+        </template>
+      </div>
+
       <template x-if="diagnostics">
         <div>
           <!-- Overall status banner - the single "is everything OK" answer,
