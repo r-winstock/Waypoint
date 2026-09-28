@@ -1588,7 +1588,7 @@
         </template>
         <template x-if="importJob && importJob.status === 'done'">
           <div>
-            <div class="text-sm mb-2" x-text="'Done: ' + importJob.result.visits + ' visits, ' + importJob.result.segments + ' segments imported, ' + importJob.result.skipped + ' skipped.'"></div>
+            <div class="text-sm mb-2" x-text="'Done: ' + importJob.result.visits + ' visits, ' + importJob.result.segments + ' segments imported (' + importJob.result.merged + ' merged into them), ' + importJob.result.skipped + ' skipped.'"></div>
             <button class="btn-ghost" @click="importJob = null">Import another</button>
           </div>
         </template>

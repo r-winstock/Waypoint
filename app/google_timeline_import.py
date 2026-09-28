@@ -104,29 +104,56 @@ def import_visit(session, seg: dict) -> bool:
     return True
 
 
-def import_activity(session, seg: dict) -> bool:
+#  A skipped/unclassified entry (timelinePath, an unmapped activity type)
+# between two same-mode activities doesn't reset the merge chain (see run()'s
+# loop) since it usually represents Google being briefly unsure, not a real
+# stop - but it can occasionally span real idle time, so merging still
+# requires the two activities to be genuinely back-to-back, not just
+# unseparated by a visit. Confirmed live: the real fragmentation case this
+# exists for touches exactly (0s gap); 2 minutes is generous headroom for
+# rounding without risking merging two actually-separate same-mode trips
+# either side of a real gap.
+MAX_MERGE_GAP_S = 120
+
+
+def import_activity(session, seg: dict, last_segment: TripSegment | None) -> tuple[TripSegment | None, bool]:
+    """Returns (the TripSegment this activity now belongs to, was_merged).
+    Google's own segmentation routinely chops one continuous journey into
+    several consecutive same-mode activity entries with no stop between them
+    - confirmed live: a single ~38-minute walk came through as three separate
+    entries (15min/3min/20min, timestamps touching exactly end-to-end, no
+    visit in between). last_segment (None unless the immediately preceding
+    processed entry was an activity of the SAME mode with nothing - no real
+    visit - between them; see run()'s loop for how that's tracked) lets this
+    extend that segment instead of creating a fragment."""
     activity = seg.get("activity", {})
     top = activity.get("topCandidate", {})
     mode = MODE_MAP.get(top.get("type"))
     if mode is None:
-        return False
+        return None, False
     distance_m = activity.get("distanceMeters") or 0.0
     start_ts = parse_ts(seg["startTime"])
     end_ts = parse_ts(seg["endTime"])
     duration_s = end_ts - start_ts
     if duration_s <= 0:
-        return False
-    session.add(
-        TripSegment(
-            start_ts=start_ts,
-            end_ts=end_ts,
-            mode=mode,
-            distance_m=distance_m,
-            duration_s=duration_s,
-            source="google_import",
-        )
+        return None, False
+
+    if last_segment is not None and last_segment.mode == mode and start_ts - last_segment.end_ts <= MAX_MERGE_GAP_S:
+        last_segment.end_ts = end_ts
+        last_segment.distance_m += distance_m
+        last_segment.duration_s = last_segment.end_ts - last_segment.start_ts
+        return last_segment, True
+
+    new_segment = TripSegment(
+        start_ts=start_ts,
+        end_ts=end_ts,
+        mode=mode,
+        distance_m=distance_m,
+        duration_s=duration_s,
+        source="google_import",
     )
-    return True
+    session.add(new_segment)
+    return new_segment, False
 
 
 def run(
@@ -141,7 +168,15 @@ def run(
     upload."""
     init_db()
     session = SessionLocal()
-    visits = segments = skipped = 0
+    visits = segments = skipped = merged = 0
+    # The immediately-preceding processed entry, IF it was an activity with
+    # nothing - no real visit - since it, so import_activity() can extend it
+    # instead of fragmenting one journey into several same-mode rows (see
+    # that function's docstring). A skipped/unclassified entry (timelinePath,
+    # an unmapped activity type) leaves this unchanged - it isn't a real
+    # stop, just Google being unsure for a moment - only an actual "visit"
+    # entry resets it, even one that fails to resolve a place.
+    last_activity_segment: TripSegment | None = None
     t0 = time.monotonic()
 
     try:
@@ -161,10 +196,15 @@ def run(
                         ok = import_visit(session, seg)
                         visits += ok
                         skipped += not ok
+                        last_activity_segment = None
                     elif "activity" in seg:
-                        ok = import_activity(session, seg)
-                        segments += ok
-                        skipped += not ok
+                        result_segment, was_merged = import_activity(session, seg, last_activity_segment)
+                        if result_segment is None:
+                            skipped += 1
+                        else:
+                            segments += not was_merged
+                            merged += was_merged
+                            last_activity_segment = result_segment
                     else:
                         # timelinePath entries are Google's own low-confidence
                         # fallback for stretches it couldn't classify - naively
@@ -203,5 +243,5 @@ def run(
     finally:
         session.close()
 
-    print(f"Done. {visits} visits, {segments} segments imported, {skipped} skipped.")
-    return {"visits": visits, "segments": segments, "skipped": skipped, "phantom_removed": phantom_removed}
+    print(f"Done. {visits} visits, {segments} segments imported ({merged} merged into them), {skipped} skipped.")
+    return {"visits": visits, "segments": segments, "merged": merged, "skipped": skipped, "phantom_removed": phantom_removed}
